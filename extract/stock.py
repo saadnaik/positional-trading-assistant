@@ -141,9 +141,9 @@ def main() -> int:
                 )
                 confirm_stock_page(page, symbol, company)
                 stock = extract_stock_data(page, symbol, company)
-                output_path = write_stock_json(stock)
 
                 print_stock_data(stock)
+                output_path = write_stock_json(stock)
                 print(f"JSON output: {output_path}")
                 pause_before_close()
                 browser.close()
