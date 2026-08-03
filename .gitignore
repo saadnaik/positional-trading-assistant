@@ -12,10 +12,12 @@ auth/*.json
 # Runtime data
 data/incoming/*
 data/archive/*
+data/extracted/*
 logs/*
 
 !data/incoming/.gitkeep
 !data/archive/.gitkeep
+!data/extracted/.gitkeep
 !logs/.gitkeep
 
 # Generated debug files

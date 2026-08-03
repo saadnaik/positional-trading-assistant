@@ -26,6 +26,7 @@ from extract.quarterly import (
     extract_quarterly_earnings,
     print_quarterly_earnings,
 )
+from extract.json_output import JsonOutputError, write_stock_json
 from extract.summary import (
     AUTH_STATE,
     EVALUATION_URL,
@@ -140,8 +141,10 @@ def main() -> int:
                 )
                 confirm_stock_page(page, symbol, company)
                 stock = extract_stock_data(page, symbol, company)
+                output_path = write_stock_json(stock)
 
                 print_stock_data(stock)
+                print(f"JSON output: {output_path}")
                 pause_before_close()
                 browser.close()
                 return 0
@@ -152,6 +155,7 @@ def main() -> int:
                 QuarterlyEarningsExtractionError,
                 AnnualEpsExtractionError,
                 AnnualRatiosExtractionError,
+                JsonOutputError,
                 OSError,
             ) as error:
                 print(f"Stock extraction failed: {error}")
