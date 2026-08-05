@@ -40,3 +40,6 @@ data/incoming/minervini_1_month/*
 
 # macOS
 .DS_Store
+
+# C++ build output
+cpp/build/
