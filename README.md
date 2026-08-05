@@ -1,10 +1,12 @@
 # Positional Trading Assistant
 
-Prototype 1 automates a manual MarketSmith India login, downloads the
-**1-Month Minervini** screen as CSV, validates it, and prints its stock symbols.
+The automation reuses a manual MarketSmith India login and exports two independent
+stock screens as CSV. **Build Your Screen** is the primary candidate source.
+**Mark Minervini 1-Month** is a separate technical-signal source; membership in
+that screen does not control or alter the independent C++ WON engine.
 
-This prototype intentionally does not include financial extraction, C++ rules,
-email, or Telegram integration.
+The export layer only acquires screen membership. It does not embed financial
+extraction or C++ screening rules, and it does not send email or Telegram messages.
 
 ## Prerequisites
 
@@ -36,25 +38,32 @@ only after login is complete. The script saves browser storage state to
 `auth/marketsmith_state.json`. This file contains sensitive session data and is
 excluded from Git. The scripts never request or store an email address or password.
 
-## 2. Export the screen
+## 2. Export a screen
 
 ```bash
 source .venv/bin/activate
-python automation/export_screen.py
+python -m automation.export_screen build-your-screen
+python -m automation.export_screen minervini
 ```
 
-The script reuses the saved session, opens **1-Month Minervini**, selects
-**Export**, and stores the CSV in `data/incoming/`. If MarketSmith changes its
-authenticated interface, the script reports the failed step and attempts to save
-`logs/export_failure.png` for diagnosis.
+The commands reuse the same saved session and select **Export** in a visible
+browser. Build Your Screen exports are stored in
+`data/incoming/build_your_screen/`; Minervini exports are stored separately in
+`data/incoming/minervini_1_month/`. If MarketSmith changes its authenticated
+interface, the exporter reports the failed step and attempts to save
+`logs/export_failure.png` and `logs/export_failure.html` for diagnosis.
 
 ## 3. Validate and print symbols
 
 ```bash
 source .venv/bin/activate
-python automation/read_csv.py
+python -m automation.read_csv data/incoming/build_your_screen/<downloaded-file>.csv
+python -m automation.read_csv data/incoming/minervini_1_month/<downloaded-file>.csv
 ```
 
-The newest CSV in `data/incoming/` must be non-empty, parseable, contain rows,
-have named columns, and include a recognized symbol column. Symbols are normalized
-to uppercase, validated, de-duplicated in first-seen order, and printed one per line.
+Pass the explicit downloaded file path to the strict parser. Each CSV must be
+non-empty, parseable, contain data rows, and match the expected 11-column schema.
+Symbols are normalized to uppercase, validated, de-duplicated in first-seen order,
+and printed with their company names. Downstream processing should likewise receive
+an explicit screen directory or file path; it must not scan the shared
+`data/incoming/` root.
