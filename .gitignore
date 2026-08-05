@@ -27,9 +27,8 @@ data/incoming/minervini_1_month/*
 !logs/.gitkeep
 
 # Generated debug files
-*.csv
-*.png
-*.html
+logs/*.png
+logs/*.html
 
 # Secrets
 .env
