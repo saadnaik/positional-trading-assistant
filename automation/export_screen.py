@@ -266,7 +266,11 @@ def _pause_for_browser_inspection() -> None:
         print("No interactive input was available; closing the browser.")
 
 
-def export_screen(config: ScreenConfig) -> Path:
+def export_screen(
+    config: ScreenConfig,
+    *,
+    pause_on_failure: bool = True,
+) -> Path:
     """Export one configured MarketSmith screen and return its final CSV path."""
 
     if not AUTH_STATE.is_file():
@@ -312,7 +316,8 @@ def export_screen(config: ScreenConfig) -> Path:
                     save_failure_diagnostics(page)
                 except (PlaywrightError, OSError) as diagnostic_error:
                     print(f"Could not save complete failure diagnostics: {diagnostic_error}")
-                _pause_for_browser_inspection()
+                if pause_on_failure:
+                    _pause_for_browser_inspection()
                 raise
         finally:
             browser.close()

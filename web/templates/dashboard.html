@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Falcon Stocks — Dashboard{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Research workspace</p>
+    <h1>Top Candidates</h1>
+    <p class="muted">Fundamental screening, positional scoring and independent technical confirmation.</p>
+  </div>
+  <button id="run-analysis" class="primary-action" type="button" {% if snapshot.status.value == 'RUNNING' %}disabled{% endif %}>Run Analysis</button>
+</section>
+
+<section id="run-status" class="status-panel" data-status="{{ snapshot.status.value }}">
+  <div><span>Run state</span><strong id="status-value" class="status status-{{ snapshot.status.value|lower }}">{{ snapshot.status.value }}</strong></div>
+  <div><span>MarketSmith session</span><strong id="session-value">{{ snapshot.session_status.value }}</strong></div>
+  <div><span>Last analysis</span><strong id="last-analysis">{{ result.completed_at.strftime('%d %b %Y, %H:%M UTC') if result else 'Not yet run' }}</strong></div>
+  <div id="progress-line" {% if snapshot.status.value != 'RUNNING' %}hidden{% endif %}>
+    <span id="phase-value">{{ snapshot.phase.value|replace('_', ' ') if snapshot.phase else '' }}</span>
+    <strong><span id="current-symbol">{{ snapshot.current_symbol or '' }}</span> <span id="progress-value">{{ snapshot.processed }}{% if snapshot.total is not none %} / {{ snapshot.total }}{% endif %}</span></strong>
+  </div>
+  <p id="run-error" class="error-text" {% if not snapshot.error %}hidden{% endif %}>{{ snapshot.error or '' }}</p>
+</section>
+
+{% if result %}
+<section class="summary-grid" aria-label="Analysis summary">
+  <article><span>Candidates</span><strong>{{ result.candidates_requested }}</strong></article>
+  <article><span>WON Pass</span><strong>{{ won_pass }}</strong></article>
+  <article><span>WON + Minervini</span><strong>{{ won_minervini }}</strong></article>
+  <article><span>Failed</span><strong>{{ result.failed|length }}</strong></article>
+</section>
+
+{% set table_sections = [
+  (categories.WON_AND_MINERVINI, '1. WON + Minervini'),
+  (categories.WON_ONLY, '2. WON Only'),
+  (categories.WON_REJECTED, '3. WON Rejected')
+] %}
+{% for category, heading in table_sections %}
+<section class="research-section">
+  <div class="section-heading"><h2>{{ heading }}</h2><span>{{ ranked_by_category[category]|length }} candidates</span></div>
+  {% if ranked_by_category[category] %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Rank</th><th>Symbol</th><th>Company</th><th>Minervini</th><th>Fundamental</th><th>Violations</th><th>Positional Score</th></tr></thead>
+    <tbody>
+    {% for item in ranked_by_category[category] %}
+      {% set stock = item.candidate %}
+      <tr class="clickable-row" data-href="{{ url_for('stock_detail', symbol=stock.symbol) }}">
+        <td data-label="Rank">{{ item.rank }}</td>
+        <td data-label="Symbol"><a href="{{ url_for('stock_detail', symbol=stock.symbol) }}"><strong>{{ stock.symbol }}</strong></a></td>
+        <td data-label="Company">{{ stock.company_name }}</td>
+        <td data-label="Minervini"><span class="pill signal-{{ stock.minervini_1_month.value|lower }}">{{ stock.minervini_1_month.value }}</span></td>
+        <td data-label="Fundamental"><span class="pill decision-{{ stock.fundamental_decision|lower }}">{{ stock.fundamental_decision }}</span></td>
+        <td data-label="Violations">{{ stock.violation_count }}/{{ stock.total_rules }}</td>
+        <td data-label="Positional Score"><strong>{{ stock.weighted_positional_score }}</strong></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty-state">No candidates.</p>{% endif %}
+</section>
+{% endfor %}
+
+{% if result.failed %}
+<section class="research-section failures">
+  <div class="section-heading"><h2>Analysis Failures</h2><span>{{ result.failed|length }} candidates</span></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Symbol</th><th>Company</th><th>Reason</th></tr></thead>
+    <tbody>{% for failure in result.failed %}<tr><td data-label="Symbol"><strong>{{ failure.symbol }}</strong></td><td data-label="Company">{{ failure.company_name }}</td><td data-label="Reason">{{ safe_error(failure.reason) }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% else %}
+<section class="empty-dashboard"><p class="eyebrow">Ready for research</p><h2>No analysis has been completed yet</h2><p>Run a fresh analysis to export both MarketSmith screens and evaluate every current candidate.</p></section>
+{% endif %}
+{% endblock %}

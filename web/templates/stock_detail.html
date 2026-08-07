@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ candidate.symbol }} — Falcon Stocks{% endblock %}
+{% block content %}
+<nav class="breadcrumb"><a href="/">← Top Candidates</a><span>Rank {{ ranked.rank }}</span></nav>
+<section class="stock-hero">
+  <div><p class="eyebrow">{{ ranked.category.value }}</p><h1>{{ candidate.symbol }}</h1><p>{{ candidate.company_name }}</p></div>
+  <div class="score-orb"><strong>{{ candidate.weighted_positional_score }}</strong><span>/100</span><small>Positional Score</small></div>
+</section>
+<section class="metric-strip">
+  <article><span>Fundamental Evaluation</span><strong class="decision-{{ candidate.fundamental_decision|lower }} text-status">{{ candidate.fundamental_decision }}</strong></article>
+  <article><span>Minervini 1-Month</span><strong>{{ candidate.minervini_1_month.value }}</strong></article>
+  <article><span>Violations</span><strong>{{ candidate.violation_count }}/{{ candidate.total_rules }}</strong></article>
+</section>
+
+<section class="research-section">
+  <div class="section-heading"><h2>Violations</h2><span>Closeness and weighted impact</span></div>
+  {% if candidate.violations_summary %}
+  <div class="violation-grid">
+  {% for violation in candidate.violations_summary %}
+    <article class="violation-card">
+      <header><span>{{ violation.rule_id }}</span><h3>{{ violation.description or 'Details available in full analysis' }}</h3></header>
+      <dl>
+        {% if violation.actual %}<div><dt>Actual values</dt><dd class="preserve-lines">{{ violation.actual }}</dd></div>{% endif %}
+        {% if violation.requirement %}<div><dt>Requirement</dt><dd class="preserve-lines">{{ violation.requirement }}</dd></div>{% endif %}
+        {% if violation.distance %}<div><dt>Closeness / distance</dt><dd class="preserve-lines">{{ violation.distance }}</dd></div>{% endif %}
+        {% if violation.weight %}<div><dt>Weight</dt><dd>{{ violation.weight }}</dd></div>{% endif %}
+        {% if violation.credit %}<div><dt>Credit</dt><dd>{{ violation.credit }}</dd></div>{% endif %}
+        {% if violation.contribution %}<div><dt>Contribution</dt><dd>{{ violation.contribution }}</dd></div>{% endif %}
+        {% if violation.reason %}<div><dt>Reason</dt><dd class="preserve-lines">{{ violation.reason }}</dd></div>{% endif %}
+      </dl>
+    </article>
+  {% endfor %}
+  </div>
+  {% else %}<p class="empty-state">No violations.</p>{% endif %}
+</section>
+
+<section class="research-section full-analysis"><h2>Full 12-Rule Analysis</h2><details><summary>View full analysis</summary><pre>{{ candidate.cpp_stdout }}</pre></details></section>
+{% endblock %}

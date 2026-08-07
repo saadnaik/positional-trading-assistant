@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from typing import Callable
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
@@ -90,6 +91,7 @@ class CandidateFailure:
 
 
 PipelineResult = EvaluatedCandidate | CandidateFailure
+CandidateProgressCallback = Callable[[str | None, int, int], None]
 
 
 @dataclass(frozen=True)
@@ -455,9 +457,13 @@ def _process_candidates_in_context(
     context: BrowserContext,
     candidates: tuple[CandidateSignal, ...],
     cpp_executable: Path,
+    progress_callback: CandidateProgressCallback | None = None,
 ) -> PipelineOutcome:
     results: list[PipelineResult] = []
-    for candidate in candidates:
+    total = len(candidates)
+    for processed, candidate in enumerate(candidates):
+        if progress_callback is not None:
+            progress_callback(candidate.symbol, processed, total)
         page = context.new_page()
         try:
             results.append(process_candidate(page, candidate, cpp_executable))
@@ -477,15 +483,18 @@ def _process_candidates_in_context(
             )
         finally:
             page.close()
+            if progress_callback is not None:
+                progress_callback(candidate.symbol, processed + 1, total)
     return PipelineOutcome(requested=len(candidates), results=tuple(results))
 
 
-def _run_pipeline_outcome(
+def run_pipeline_outcome(
     primary_csv: Path,
     minervini_csv: Path | None,
     cpp_executable: Path,
     *,
     limit: int | None = 5,
+    progress_callback: CandidateProgressCallback | None = None,
 ) -> PipelineOutcome:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be greater than zero")
@@ -501,7 +510,13 @@ def _run_pipeline_outcome(
         browser = playwright.chromium.launch(headless=False)
         try:
             context = browser.new_context(storage_state=AUTH_STATE)
-            return _process_candidates_in_context(context, selected, cpp_executable)
+            if progress_callback is None:
+                return _process_candidates_in_context(
+                    context, selected, cpp_executable
+                )
+            return _process_candidates_in_context(
+                context, selected, cpp_executable, progress_callback
+            )
         finally:
             browser.close()
 
@@ -518,6 +533,11 @@ def run_pipeline(
     return _run_pipeline_outcome(
         primary_csv, minervini_csv, cpp_executable, limit=limit
     ).successful
+
+
+# Backward-compatible alias for callers and tests written before the structured
+# pipeline function became public.
+_run_pipeline_outcome = run_pipeline_outcome
 
 
 def _positive_limit(value: str) -> int:
@@ -681,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         primary_csv, minervini_csv = _resolve_cli_inputs(args)
-        outcome = _run_pipeline_outcome(
+        outcome = run_pipeline_outcome(
             primary_csv,
             minervini_csv,
             args.cpp_executable,

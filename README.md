@@ -8,6 +8,29 @@ that screen does not control or alter the independent C++ WON engine.
 The export layer only acquires screen membership. It does not embed financial
 extraction or C++ screening rules, and it does not send email or Telegram messages.
 
+## Falcon Stocks local dashboard
+
+After installing the pinned requirements, start the localhost-only dashboard:
+
+```bash
+source .venv/bin/activate
+uvicorn web.app:app --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000`. The **Run Analysis** action exports both screens
+fresh, processes every Build Your Screen candidate, and presents the existing
+WON, positional-score, Minervini, and ranking results.
+
+For optional phone testing on the same LAN, run:
+
+```bash
+uvicorn web.app:app --host 0.0.0.0 --port 8000
+```
+
+This second command exposes the unauthenticated development dashboard to devices
+that can reach the computer on the local network. It is not intended for internet
+exposure.
+
 ## Prerequisites
 
 - Ubuntu 24.04 under WSL2 with WSLg
