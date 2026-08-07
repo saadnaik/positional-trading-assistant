@@ -17,6 +17,7 @@ from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, 
 
 from automation.compare_screens import CandidateSignal, SignalStatus, compare_screens
 from automation.read_csv import MarketSmithCsvError, latest_csv
+from automation.runtime_config import launch_falcon_chromium
 from extract.json_output import write_stock_json
 from extract.stock import extract_stock_data
 from extract.summary import AUTH_STATE, EVALUATION_URL, confirm_stock_page
@@ -524,7 +525,7 @@ def run_pipeline_outcome(
         )
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
+        browser = launch_falcon_chromium(playwright)
         try:
             context = browser.new_context(storage_state=AUTH_STATE)
             if progress_callback is None:

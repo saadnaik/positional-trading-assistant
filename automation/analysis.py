@@ -22,10 +22,7 @@ from automation.run_pipeline import (
     rank_candidates,
     run_pipeline_outcome,
 )
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CPP_EXECUTABLE = PROJECT_ROOT / "cpp" / "build" / "stock_reader"
+from automation.runtime_config import stock_reader_path
 
 
 class AnalysisPhase(str, Enum):
@@ -62,7 +59,7 @@ Exporter = Callable[..., Path]
 
 
 def run_complete_analysis(
-    cpp_executable: Path = DEFAULT_CPP_EXECUTABLE,
+    cpp_executable: Path | None = None,
     *,
     progress_callback: ProgressCallback | None = None,
     exporter: Exporter | None = None,
@@ -97,11 +94,12 @@ def run_complete_analysis(
             )
         )
 
+    evaluator = stock_reader_path() if cpp_executable is None else Path(cpp_executable)
     outcome = run_pipeline_outcome(
         primary_csv,
         minervini_1_month_csv,
         minervini_5_months_csv,
-        Path(cpp_executable),
+        evaluator,
         limit=None,
         progress_callback=candidate_progress,
     )

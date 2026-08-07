@@ -19,7 +19,7 @@ source .venv/bin/activate
 uvicorn web.app:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000`. The **Run Analysis** action exports both screens
+Open `http://127.0.0.1:8000`. The **Run Analysis** action exports all three screens
 fresh, processes every Build Your Screen candidate, and presents the existing
 WON, positional-score, Minervini, and ranking results.
 
@@ -32,6 +32,52 @@ uvicorn web.app:app --host 0.0.0.0 --port 8000
 This second command exposes the unauthenticated development dashboard to devices
 that can reach the computer on the local network. It is not intended for internet
 exposure.
+
+### Falcon runtime configuration
+
+Falcon's production browser workflows are visible by default. Set
+`FALCON_BROWSER_HEADLESS` to `true`, `1`, `yes`, or `on` to use headless
+Chromium. The corresponding false values are `false`, `0`, `no`, and `off`.
+Values are case-insensitive and surrounding whitespace is ignored; any other
+value fails clearly. Manual login remains visible and does not use this setting.
+
+`FALCON_STOCK_READER` may point Falcon at a specific compiled evaluator. When
+unset it uses the project-relative `cpp/build/stock_reader` binary.
+
+## Falcon Stocks with Docker
+
+Docker support packages the existing Python application, Playwright Chromium,
+and Release C++ evaluator without embedding runtime state or credentials.
+
+Build the image:
+
+```bash
+docker build -t falcon-stocks:local .
+```
+
+Start the localhost-only Compose service:
+
+```bash
+docker compose up --build
+```
+
+Open `http://127.0.0.1:8000`. Compose mounts these host directories as writable,
+persistent runtime state:
+
+- `auth/` at `/app/auth`
+- `data/` at `/app/data`
+- `logs/` at `/app/logs`
+
+The saved `auth/marketsmith_state.json` is never copied into the image. Create or
+refresh it with the existing host-side, visible `automation/login.py` workflow,
+then mount it through Compose. Remote interactive session refresh remains an
+unresolved cloud-deployment concern; no web login flow is provided.
+
+Compose sets `FALCON_BROWSER_HEADLESS=true` and uses the evaluator at
+`/app/cpp/build/stock_reader`. Falcon must run with exactly one Uvicorn worker
+because its single-analysis job manager is currently process-local. The service
+binds only to host address `127.0.0.1`; do not expose this unauthenticated setup
+to the public internet.
 
 ## Prerequisites
 

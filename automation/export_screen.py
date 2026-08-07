@@ -14,6 +14,8 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect, sync_playwright
 
+from automation.runtime_config import launch_falcon_chromium
+
 
 @dataclass(frozen=True)
 class ScreenConfig:
@@ -294,7 +296,7 @@ def export_screen(
 
     page: Page | None = None
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
+        browser = launch_falcon_chromium(playwright)
         try:
             context = browser.new_context(
                 storage_state=AUTH_STATE,

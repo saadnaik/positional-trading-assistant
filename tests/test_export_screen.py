@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from automation.export_screen import (
     BUILD_YOUR_SCREEN,
@@ -16,6 +16,7 @@ from automation.export_screen import (
     configured_output_directory,
     dismiss_screen_information_modal,
     export_locator_candidates,
+    export_screen,
     timestamped_destination,
 )
 
@@ -205,6 +206,40 @@ class DestinationTests(unittest.TestCase):
             shared_root = (self.project_root / "data/incoming").resolve()
             for config in SCREENS.values():
                 self.assertNotEqual(configured_output_directory(config), shared_root)
+
+    def test_production_export_uses_central_browser_launcher(self) -> None:
+        playwright = Mock()
+        manager = Mock()
+        manager.__enter__ = Mock(return_value=playwright)
+        manager.__exit__ = Mock(return_value=False)
+        browser = Mock()
+        page = browser.new_context.return_value.new_page.return_value
+        download_context = MagicMock()
+        page.expect_download.return_value = download_context
+        download = download_context.__enter__.return_value.value
+        download.suggested_filename = "Expected_Screen.csv"
+        download.failure.return_value = None
+        destination = self.project_root / "download.csv"
+
+        with patch("automation.export_screen.AUTH_STATE") as auth_state, patch(
+            "automation.export_screen.sync_playwright", return_value=manager
+        ), patch(
+            "automation.export_screen.launch_falcon_chromium", return_value=browser
+        ) as launch, patch(
+            "automation.export_screen.open_screen"
+        ), patch(
+            "automation.export_screen.dismiss_screen_information_modal"
+        ), patch(
+            "automation.export_screen.find_export_control"
+        ), patch(
+            "automation.export_screen.timestamped_destination", return_value=destination
+        ):
+            auth_state.is_file.return_value = True
+            result = export_screen(self.config, pause_on_failure=False)
+
+        self.assertEqual(result, destination)
+        launch.assert_called_once_with(playwright)
+        browser.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

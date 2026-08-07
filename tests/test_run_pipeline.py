@@ -535,7 +535,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
             captured.extend(selected)
             return fake_outcome
 
-        with patch("automation.run_pipeline.compare_screens", return_value=candidates), patch(
+        with patch.dict("os.environ", {"FALCON_BROWSER_HEADLESS": "true"}, clear=False), patch("automation.run_pipeline.compare_screens", return_value=candidates), patch(
             "automation.run_pipeline.AUTH_STATE"
         ) as auth_state, patch(
             "automation.run_pipeline.sync_playwright", return_value=manager
@@ -550,7 +550,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
             [candidate.symbol for candidate in captured],
             ["ONE", "TWO", "THREE", "FOUR", "FIVE"],
         )
-        playwright.chromium.launch.assert_called_once_with(headless=False)
+        playwright.chromium.launch.assert_called_once_with(headless=True)
         browser.new_context.assert_called_once_with(storage_state=auth_state)
         browser.close.assert_called_once_with()
 

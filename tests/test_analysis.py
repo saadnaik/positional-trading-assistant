@@ -85,6 +85,18 @@ class CompleteAnalysisTests(unittest.TestCase):
             [("AAA", 0, 2), ("AAA", 1, 2), ("BBB", 2, 2)],
         )
 
+    def test_default_evaluator_comes_from_runtime_configuration(self) -> None:
+        exporter = Mock(side_effect=[Path("a.csv"), Path("b.csv"), Path("c.csv")])
+        outcome = PipelineOutcome(0, ())
+        with patch(
+            "automation.analysis.stock_reader_path", return_value=Path("configured-reader")
+        ) as configured, patch(
+            "automation.analysis.run_pipeline_outcome", return_value=outcome
+        ) as pipeline:
+            run_complete_analysis(exporter=exporter)
+        configured.assert_called_once_with()
+        self.assertEqual(pipeline.call_args.args[3], Path("configured-reader"))
+
 
 if __name__ == "__main__":
     unittest.main()
