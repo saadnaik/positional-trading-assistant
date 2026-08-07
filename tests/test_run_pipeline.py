@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from automation.compare_screens import CandidateSignal, SignalStatus
 from automation.run_pipeline import (
     CandidateFailure,
+    CppEvaluationSummary,
     CppEvaluationError,
     EvaluatedCandidate,
     PipelineOutcome,
@@ -39,7 +40,13 @@ class CppEvaluationTests(unittest.TestCase):
 
     def completed(
         self,
-        stdout: str = "Symbol: AAA\nDecision: PASS\nViolations: 2/12\n",
+        stdout: str = (
+            "Symbol: AAA\n\n"
+            "Fundamental Evaluation: PASS\n"
+            "Violations: 2/12\n\n"
+            "Weighted Positional Score: 77.2/100\n"
+            "\nR1 PASS\nfull detailed output\n"
+        ),
         *,
         returncode: int = 0,
         stderr: str = "",
@@ -50,18 +57,86 @@ class CppEvaluationTests(unittest.TestCase):
         result.returncode = returncode
         return result
 
-    def evaluate(self, completed: Mock) -> tuple[str, int, int]:
+    def evaluate(self, completed: Mock) -> CppEvaluationSummary:
         with patch("automation.run_pipeline.subprocess.run", return_value=completed):
             return evaluate_with_cpp(self.executable, self.json_path)
 
     def test_valid_pass_output(self) -> None:
-        self.assertEqual(self.evaluate(self.completed()), ("PASS", 2, 12))
+        summary = self.evaluate(self.completed())
+        self.assertEqual(summary.symbol, "AAA")
+        self.assertEqual(summary.fundamental_decision, "PASS")
+        self.assertEqual((summary.violation_count, summary.total_rules), (2, 12))
+        self.assertEqual(summary.weighted_positional_score, "77.2")
 
     def test_valid_reject_output(self) -> None:
-        output = "Symbol: AAA\nDecision: REJECT\nViolations: 7/12\n"
-        self.assertEqual(
-            self.evaluate(self.completed(output)), ("REJECT", 7, 12)
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: REJECT\n"
+            "Violations: 7/12\nWeighted Positional Score: 52.4/100\n"
         )
+        summary = self.evaluate(self.completed(output))
+        self.assertEqual(summary.fundamental_decision, "REJECT")
+        self.assertEqual(summary.violation_count, 7)
+        self.assertEqual(summary.weighted_positional_score, "52.4")
+
+    def test_zero_score_is_accepted(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: REJECT\n"
+            "Violations: 12/12\nWeighted Positional Score: 0.0/100\n"
+        )
+        self.assertEqual(
+            self.evaluate(self.completed(output)).weighted_positional_score, "0.0"
+        )
+
+    def test_one_hundred_score_is_accepted(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: PASS\n"
+            "Violations: 0/12\nWeighted Positional Score: 100.0/100\n"
+        )
+        self.assertEqual(
+            self.evaluate(self.completed(output)).weighted_positional_score, "100.0"
+        )
+
+    def test_score_above_one_hundred_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: PASS\n"
+            "Violations: 0/12\nWeighted Positional Score: 100.1/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "within 0..100"):
+            self.evaluate(self.completed(output))
+
+    def test_negative_score_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: REJECT\n"
+            "Violations: 12/12\nWeighted Positional Score: -0.1/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "Weighted Positional Score"):
+            self.evaluate(self.completed(output))
+
+    def test_missing_score_is_rejected(self) -> None:
+        output = "Symbol: AAA\nFundamental Evaluation: PASS\nViolations: 2/12\n"
+        with self.assertRaisesRegex(CppEvaluationError, "Weighted Positional Score"):
+            self.evaluate(self.completed(output))
+
+    def test_malformed_and_integer_only_scores_are_rejected(self) -> None:
+        for score in ("77x2", "77", "77.", ".2"):
+            with self.subTest(score=score):
+                output = (
+                    "Symbol: AAA\nFundamental Evaluation: PASS\n"
+                    f"Violations: 2/12\nWeighted Positional Score: {score}/100\n"
+                )
+                with self.assertRaisesRegex(
+                    CppEvaluationError, "Weighted Positional Score"
+                ):
+                    self.evaluate(self.completed(output))
+
+    def test_duplicate_score_line_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: PASS\nViolations: 2/12\n"
+            "Weighted Positional Score: 77.2/100\n"
+            "Weighted Positional Score: malformed/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "duplicate"):
+            self.evaluate(self.completed(output))
 
     def test_subprocess_uses_argument_list_and_no_shell(self) -> None:
         with patch(
@@ -77,34 +152,58 @@ class CppEvaluationTests(unittest.TestCase):
         self.assertNotIn("shell", run.call_args.kwargs)
 
     def test_malformed_violations_line_is_rejected(self) -> None:
-        output = "Symbol: AAA\nDecision: PASS\nViolations: two of twelve\n"
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: PASS\n"
+            "Violations: two of twelve\nWeighted Positional Score: 77.2/100\n"
+        )
         with self.assertRaisesRegex(CppEvaluationError, "Violations"):
             self.evaluate(self.completed(output))
 
     def test_wrong_total_is_rejected(self) -> None:
-        output = "Symbol: AAA\nDecision: PASS\nViolations: 2/11\n"
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: PASS\n"
+            "Violations: 2/11\nWeighted Positional Score: 77.2/100\n"
+        )
         with self.assertRaisesRegex(CppEvaluationError, "X/12"):
             self.evaluate(self.completed(output))
 
-    def test_missing_summary_line_is_rejected(self) -> None:
-        output = "Symbol: AAA\nViolations: 2/12\n"
-        with self.assertRaisesRegex(CppEvaluationError, "Decision"):
+    def test_missing_fundamental_evaluation_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nViolations: 2/12\n"
+            "Weighted Positional Score: 77.2/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "Fundamental Evaluation"):
+            self.evaluate(self.completed(output))
+
+    def test_obsolete_decision_only_output_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nDecision: PASS\nViolations: 2/12\n"
+            "Weighted Positional Score: 77.2/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "Fundamental Evaluation"):
             self.evaluate(self.completed(output))
 
     def test_duplicate_summary_line_is_rejected(self) -> None:
         output = (
-            "Symbol: AAA\nSymbol: AAA\nDecision: PASS\nViolations: 2/12\n"
+            "Symbol: AAA\nSymbol: AAA\nFundamental Evaluation: PASS\n"
+            "Violations: 2/12\nWeighted Positional Score: 77.2/100\n"
         )
         with self.assertRaisesRegex(CppEvaluationError, "duplicate"):
             self.evaluate(self.completed(output))
 
-    def test_invalid_decision_is_rejected(self) -> None:
-        output = "Symbol: AAA\nDecision: MAYBE\nViolations: 2/12\n"
-        with self.assertRaisesRegex(CppEvaluationError, "PASS or REJECT"):
+    def test_invalid_fundamental_evaluation_is_rejected(self) -> None:
+        output = (
+            "Symbol: AAA\nFundamental Evaluation: MAYBE\n"
+            "Violations: 2/12\nWeighted Positional Score: 77.2/100\n"
+        )
+        with self.assertRaisesRegex(CppEvaluationError, "Fundamental Evaluation"):
             self.evaluate(self.completed(output))
 
     def test_symbol_mismatch_is_rejected(self) -> None:
-        output = "Symbol: BBB\nDecision: PASS\nViolations: 2/12\n"
+        output = (
+            "Symbol: BBB\nFundamental Evaluation: PASS\n"
+            "Violations: 2/12\nWeighted Positional Score: 77.2/100\n"
+        )
         with self.assertRaisesRegex(CppEvaluationError, "symbol mismatch"):
             self.evaluate(self.completed(output))
 
@@ -128,6 +227,10 @@ class CppEvaluationTests(unittest.TestCase):
         self.assertIn("reader exploded", message)
         self.assertIn("exit status: 1", message)
 
+    def test_success_retains_full_stdout_verbatim(self) -> None:
+        stdout = self.completed().stdout
+        self.assertEqual(self.evaluate(self.completed(stdout)).stdout, stdout)
+
     def test_json_symbol_mismatch_is_rejected_before_subprocess(self) -> None:
         self.json_path.write_text(json.dumps({"symbol": "BBB"}), encoding="utf-8")
         with patch("automation.run_pipeline.subprocess.run") as run:
@@ -147,6 +250,13 @@ class PipelineOrchestrationTests(unittest.TestCase):
         return CandidateSignal(symbol, f"{symbol} Company", status)
 
     def evaluated(self, candidate: CandidateSignal) -> EvaluatedCandidate:
+        cpp_stdout = (
+            f"Symbol: {candidate.symbol}\n"
+            "Fundamental Evaluation: PASS\n"
+            "Violations: 1/12\n"
+            "Weighted Positional Score: 88.8/100\n"
+            "R1 PASS\nverbatim details\n"
+        )
         return EvaluatedCandidate(
             symbol=candidate.symbol,
             company_name=candidate.company_name,
@@ -155,6 +265,8 @@ class PipelineOrchestrationTests(unittest.TestCase):
             fundamental_decision="PASS",
             violation_count=1,
             total_rules=12,
+            weighted_positional_score="88.8",
+            cpp_stdout=cpp_stdout,
         )
 
     def test_fresh_page_per_candidate_preserves_order_and_continues(self) -> None:
@@ -186,26 +298,35 @@ class PipelineOrchestrationTests(unittest.TestCase):
         second_page.close.assert_called_once_with()
 
     def test_run_pipeline_applies_limit_exactly_and_returns_successes(self) -> None:
-        candidates = tuple(self.candidate(name) for name in ("ONE", "TWO", "THREE"))
+        candidates = tuple(
+            self.candidate(name)
+            for name in ("ONE", "TWO", "THREE", "FOUR", "FIVE")
+        )
         outcome = PipelineOutcome(
-            requested=2,
-            results=(self.evaluated(candidates[0]), self.evaluated(candidates[1])),
+            requested=5,
+            results=tuple(self.evaluated(candidate) for candidate in candidates),
         )
         with patch(
             "automation.run_pipeline._run_pipeline_outcome", return_value=outcome
         ) as runner:
             results = run_pipeline(
-                Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=2
+                Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=5
             )
-        self.assertEqual([result.symbol for result in results], ["ONE", "TWO"])
+        self.assertEqual(
+            [result.symbol for result in results],
+            ["ONE", "TWO", "THREE", "FOUR", "FIVE"],
+        )
         runner.assert_called_once_with(
-            Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=2
+            Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=5
         )
 
-    def test_internal_runner_selects_only_first_two_in_primary_order(self) -> None:
-        candidates = tuple(self.candidate(name) for name in ("ONE", "TWO", "THREE"))
+    def test_internal_runner_selects_only_first_five_in_primary_order(self) -> None:
+        candidates = tuple(
+            self.candidate(name)
+            for name in ("ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX")
+        )
         captured: list[CandidateSignal] = []
-        fake_outcome = PipelineOutcome(requested=2, results=())
+        fake_outcome = PipelineOutcome(requested=5, results=())
         playwright = Mock()
         browser = playwright.chromium.launch.return_value
         manager = Mock()
@@ -225,9 +346,12 @@ class PipelineOrchestrationTests(unittest.TestCase):
         ):
             auth_state.is_file.return_value = True
             _run_pipeline_outcome(
-                Path("primary.csv"), None, Path("reader"), limit=2
+                Path("primary.csv"), None, Path("reader"), limit=5
             )
-        self.assertEqual([candidate.symbol for candidate in captured], ["ONE", "TWO"])
+        self.assertEqual(
+            [candidate.symbol for candidate in captured],
+            ["ONE", "TWO", "THREE", "FOUR", "FIVE"],
+        )
         playwright.chromium.launch.assert_called_once_with(headless=False)
         browser.new_context.assert_called_once_with(storage_state=auth_state)
         browser.close.assert_called_once_with()
@@ -248,6 +372,12 @@ class PipelineOrchestrationTests(unittest.TestCase):
                         ]
                     )
 
+    def test_default_cli_limit_is_five(self) -> None:
+        args = _parse_args(
+            ["--primary", "primary.csv", "--cpp-executable", "reader"]
+        )
+        self.assertEqual(args.limit, 5)
+
     def test_process_candidate_carries_signal_without_altering_cpp_result(self) -> None:
         page = Mock()
         stock = Mock(symbol="AAA")
@@ -261,7 +391,14 @@ class PipelineOrchestrationTests(unittest.TestCase):
                 "automation.run_pipeline.write_stock_json", return_value=json_path
             ), patch(
                 "automation.run_pipeline._evaluate_with_cpp_for_symbol",
-                return_value=("REJECT", 7, 12),
+                return_value=CppEvaluationSummary(
+                    symbol="AAA",
+                    fundamental_decision="REJECT",
+                    violation_count=7,
+                    total_rules=12,
+                    weighted_positional_score="77.2",
+                    stdout="complete C++ report\n",
+                ),
             ):
                 result = process_candidate(
                     page, self.candidate("AAA", status), Path("reader")
@@ -271,6 +408,8 @@ class PipelineOrchestrationTests(unittest.TestCase):
                 (result.fundamental_decision, result.violation_count),
                 ("REJECT", 7),
             )
+            self.assertEqual(result.weighted_positional_score, "77.2")
+            self.assertEqual(result.cpp_stdout, "complete C++ report\n")
         page.wait_for_function.assert_called_with(
             "document.title !== 'Stock Share Price - MarketSmith India'",
             timeout=60_000,
@@ -289,6 +428,33 @@ class PipelineOrchestrationTests(unittest.TestCase):
         self.assertIn("Successful: 1", text)
         self.assertIn("Failed: 1", text)
         self.assertIn("Status: FAILED", text)
+
+    def test_table_contains_only_successes_in_result_order(self) -> None:
+        first = self.evaluated(self.candidate("FIRST", SignalStatus.YES))
+        failure = CandidateFailure(
+            "FAILED", "Failed Company", SignalStatus.NO, "failed", None, None
+        )
+        third = self.evaluated(self.candidate("THIRD", SignalStatus.UNKNOWN))
+        output = StringIO()
+        with redirect_stdout(output):
+            _print_outcome(PipelineOutcome(3, (first, failure, third)))
+        text = output.getvalue()
+        table_start = text.index("Symbol       Minervini")
+        report_start = text.index("=" * 40, table_start)
+        table = text[table_start:report_start]
+        self.assertLess(table.index("FIRST"), table.index("THIRD"))
+        self.assertNotIn("FAILED", table)
+        self.assertIn("88.8", table)
+
+    def test_detailed_reports_use_retained_stdout_verbatim(self) -> None:
+        success = self.evaluated(self.candidate("FULL", SignalStatus.NO))
+        output = StringIO()
+        with redirect_stdout(output):
+            _print_outcome(PipelineOutcome(1, (success,)))
+        text = output.getvalue()
+        self.assertIn("FULL — FULL Company", text)
+        self.assertIn("Minervini 1-Month: NO", text)
+        self.assertIn(success.cpp_stdout, text)
 
     def test_resolve_latest_inputs_only_uses_explicit_directories(self) -> None:
         primary_directory = Path("dedicated-primary")

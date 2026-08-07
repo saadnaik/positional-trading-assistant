@@ -1,9 +1,10 @@
-"""Run the two-candidate MarketSmith extraction and C++ evaluation prototype."""
+"""Run the five-candidate MarketSmith extraction and C++ evaluation prototype."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,16 @@ LOG_DIR = PROJECT_ROOT / "logs"
 
 
 @dataclass(frozen=True)
+class CppEvaluationSummary:
+    symbol: str
+    fundamental_decision: str
+    violation_count: int
+    total_rules: int
+    weighted_positional_score: str
+    stdout: str
+
+
+@dataclass(frozen=True)
 class EvaluatedCandidate:
     symbol: str
     company_name: str
@@ -32,6 +43,8 @@ class EvaluatedCandidate:
     fundamental_decision: str
     violation_count: int
     total_rules: int
+    weighted_positional_score: str
+    cpp_stdout: str
 
 
 @dataclass(frozen=True)
@@ -119,6 +132,14 @@ def _single_summary_value(
     stdout: str,
     completed: subprocess.CompletedProcess[str],
 ) -> str:
+    summary_lines = re.findall(
+        rf"^{re.escape(label)}:", stdout, flags=re.MULTILINE
+    )
+    if len(summary_lines) > 1:
+        raise _completed_process_diagnostics(
+            f"C++ output contains duplicate or conflicting {label} summary lines.",
+            completed,
+        )
     matches = pattern.findall(stdout)
     if not matches:
         raise _completed_process_diagnostics(
@@ -136,7 +157,7 @@ def _evaluate_with_cpp_for_symbol(
     executable: Path,
     json_path: Path,
     expected_symbol: str,
-) -> tuple[str, int, int]:
+) -> CppEvaluationSummary:
     executable = Path(executable)
     json_path = Path(json_path)
     if not executable.is_file():
@@ -173,8 +194,10 @@ def _evaluate_with_cpp_for_symbol(
         completed,
     )
     decision = _single_summary_value(
-        "Decision",
-        re.compile(r"^Decision:\s*(\S+)\s*$", re.MULTILINE),
+        "Fundamental Evaluation",
+        re.compile(
+            r"^Fundamental Evaluation:\s*(PASS|REJECT)\s*$", re.MULTILINE
+        ),
         completed.stdout,
         completed,
     )
@@ -184,15 +207,20 @@ def _evaluate_with_cpp_for_symbol(
         completed.stdout,
         completed,
     )
+    weighted_score = _single_summary_value(
+        "Weighted Positional Score",
+        re.compile(
+            r"^Weighted Positional Score:\s*(\d+\.\d+)/100\s*$",
+            re.MULTILINE,
+        ),
+        completed.stdout,
+        completed,
+    )
 
     if symbol != expected_symbol:
         raise _completed_process_diagnostics(
             f"C++ symbol mismatch: expected {expected_symbol!r}, found {symbol!r}.",
             completed,
-        )
-    if decision not in {"PASS", "REJECT"}:
-        raise _completed_process_diagnostics(
-            f"C++ Decision must be PASS or REJECT, found {decision!r}.", completed
         )
     violation_match = re.fullmatch(r"(\d+)/12", violations)
     if violation_match is None:
@@ -205,13 +233,27 @@ def _evaluate_with_cpp_for_symbol(
         raise _completed_process_diagnostics(
             f"C++ violation count is outside 0..12: {violation_count}.", completed
         )
-    return decision, violation_count, 12
+    score_value = Decimal(weighted_score)
+    if not Decimal("0") <= score_value <= Decimal("100"):
+        raise _completed_process_diagnostics(
+            "C++ Weighted Positional Score must be within 0..100, "
+            f"found {weighted_score!r}.",
+            completed,
+        )
+    return CppEvaluationSummary(
+        symbol=symbol,
+        fundamental_decision=decision,
+        violation_count=violation_count,
+        total_rules=12,
+        weighted_positional_score=weighted_score,
+        stdout=completed.stdout,
+    )
 
 
 def evaluate_with_cpp(
     executable: Path,
     json_path: Path,
-) -> tuple[str, int, int]:
+) -> CppEvaluationSummary:
     """Run stock_reader and return its validated high-level WON summary."""
 
     expected_symbol = _read_json_symbol(Path(json_path))
@@ -242,7 +284,7 @@ def process_candidate(
             f"found {stock.symbol!r}."
         )
     json_path = write_stock_json(stock)
-    decision, violation_count, total_rules = _evaluate_with_cpp_for_symbol(
+    summary = _evaluate_with_cpp_for_symbol(
         cpp_executable, json_path, candidate.symbol
     )
     return EvaluatedCandidate(
@@ -250,9 +292,11 @@ def process_candidate(
         company_name=candidate.company_name,
         minervini_1_month=candidate.minervini_1_month,
         json_path=json_path,
-        fundamental_decision=decision,
-        violation_count=violation_count,
-        total_rules=total_rules,
+        fundamental_decision=summary.fundamental_decision,
+        violation_count=summary.violation_count,
+        total_rules=summary.total_rules,
+        weighted_positional_score=summary.weighted_positional_score,
+        cpp_stdout=summary.stdout,
     )
 
 
@@ -315,7 +359,7 @@ def _run_pipeline_outcome(
     minervini_csv: Path | None,
     cpp_executable: Path,
     *,
-    limit: int = 2,
+    limit: int = 5,
 ) -> PipelineOutcome:
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
@@ -346,7 +390,7 @@ def run_pipeline(
     minervini_csv: Path | None,
     cpp_executable: Path,
     *,
-    limit: int = 2,
+    limit: int = 5,
 ) -> tuple[EvaluatedCandidate, ...]:
     """Run the prototype and return successful evaluations in primary order."""
 
@@ -376,7 +420,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--minervini-latest-from", type=Path, metavar="DIRECTORY"
     )
     parser.add_argument("--cpp-executable", type=Path, required=True)
-    parser.add_argument("--limit", type=_positive_limit, default=2)
+    parser.add_argument("--limit", type=_positive_limit, default=5)
     return parser.parse_args(argv)
 
 
@@ -403,10 +447,40 @@ def _print_outcome(outcome: PipelineOutcome) -> None:
         else:
             print(f"Company: {result.company_name}")
             print(f"Minervini 1-Month: {result.minervini_1_month.value}")
-            print(f"Fundamental decision: {result.fundamental_decision}")
+            print(f"Fundamental Evaluation: {result.fundamental_decision}")
             print(f"Violations: {result.violation_count}/{result.total_rules}")
+            print(
+                "Weighted Positional Score: "
+                f"{result.weighted_positional_score}/100"
+            )
             print(f"JSON output: {result.json_path}")
         print()
+
+    successful = outcome.successful
+    print(
+        f"{'Symbol':<12} {'Minervini':<11} {'Fundamental':<13} "
+        f"{'Violations':<12} Positional Score"
+    )
+    print("-" * 65)
+    for result in successful:
+        violations = f"{result.violation_count}/{result.total_rules}"
+        print(
+            f"{result.symbol:<12} {result.minervini_1_month.value:<11} "
+            f"{result.fundamental_decision:<13} "
+            f"{violations:<12} "
+            f"{result.weighted_positional_score}"
+        )
+
+    for result in successful:
+        print()
+        print("=" * 40)
+        print(f"{result.symbol} — {result.company_name}")
+        print(f"Minervini 1-Month: {result.minervini_1_month.value}")
+        print("=" * 40)
+        print()
+        print(result.cpp_stdout, end="" if result.cpp_stdout.endswith("\n") else "\n")
+
+    print()
     print(f"Candidates requested: {outcome.requested}")
     print(f"Successful: {len(outcome.successful)}")
     print(f"Failed: {len(outcome.failed)}")
