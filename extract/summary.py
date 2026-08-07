@@ -21,6 +21,7 @@ EVALUATION_URL = (
 SUMMARY_SELECTOR = "#slide-details_placeholder"
 PERCENTAGE_VALUE = re.compile(r"^[+-]?\d+(?:\.\d+)?%$")
 NUMERIC_VALUE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+UNAVAILABLE_VALUES = {"", "n/a", "na", "-"}
 EPS_LABEL = re.compile(r"^\s*EPS\s+Growth\s+Rate\s*$", re.IGNORECASE)
 
 
@@ -176,12 +177,12 @@ def extract_value(summary: Locator, label: str) -> str:
         value = alternate_value(summary, label)
     if value is None:
         raise SummaryExtractionError(f"Could not find visible summary field {label!r}.")
-    if not value:
-        raise SummaryExtractionError(f"Summary field {label!r} is empty.")
     return value
 
 
 def validate_percentage(label: str, value: str) -> str:
+    if value.casefold() in UNAVAILABLE_VALUES:
+        return value
     if not PERCENTAGE_VALUE.fullmatch(value):
         raise SummaryExtractionError(
             f"Summary field {label!r} has malformed percentage text: {value!r}."
@@ -190,6 +191,8 @@ def validate_percentage(label: str, value: str) -> str:
 
 
 def validate_numeric(label: str, value: str) -> str:
+    if value.casefold() in UNAVAILABLE_VALUES:
+        return value
     if not NUMERIC_VALUE.fullmatch(value):
         raise SummaryExtractionError(
             f"Summary field {label!r} has malformed numeric text: {value!r}."
