@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from automation.export_screen import (
     BUILD_YOUR_SCREEN,
     MINERVINI_1_MONTH,
+    MINERVINI_5_MONTHS,
     SCREENS,
     ScreenConfig,
     _parse_args,
@@ -23,6 +24,7 @@ class ScreenRegistryTests(unittest.TestCase):
     def test_required_screens_are_registered(self) -> None:
         self.assertIn("build-your-screen", SCREENS)
         self.assertIn("minervini", SCREENS)
+        self.assertIn("minervini-5-months", SCREENS)
 
     def test_build_your_screen_configuration(self) -> None:
         self.assertEqual(
@@ -52,6 +54,22 @@ class ScreenRegistryTests(unittest.TestCase):
                 ),
                 output_directory=Path("data/incoming/minervini_1_month"),
                 expected_filename_hint="Minervini_Trend_Template-1_Month",
+                role="signal",
+            ),
+        )
+
+    def test_five_month_minervini_configuration(self) -> None:
+        self.assertEqual(
+            MINERVINI_5_MONTHS,
+            ScreenConfig(
+                name="Mark Minervini 5-Month",
+                cli_name="minervini-5-months",
+                url=(
+                    "https://marketsmithindia.com/mstool/list/marketsmith-stock-screens/"
+                    "minervini-trend-template-5-months/idealists.jsp#/"
+                ),
+                output_directory=Path("data/incoming/minervini_5_months"),
+                expected_filename_hint="Minervini_Trend_Template-5_Months",
                 role="signal",
             ),
         )

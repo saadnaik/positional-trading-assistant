@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from automation.compare_screens import CandidateSignal, SignalStatus
+from automation.compare_screens import CandidateSignal, SignalStatus, combine_minervini_statuses
 from automation.run_pipeline import (
     CandidateCategory,
     CandidateFailure,
@@ -312,9 +312,13 @@ class ViolationSummaryTests(unittest.TestCase):
 
 class PipelineOrchestrationTests(unittest.TestCase):
     def candidate(
-        self, symbol: str, status: SignalStatus = SignalStatus.NO
+        self, symbol: str, status: SignalStatus = SignalStatus.NO,
+        five_months: SignalStatus = SignalStatus.NO,
     ) -> CandidateSignal:
-        return CandidateSignal(symbol, f"{symbol} Company", status)
+        return CandidateSignal(
+            symbol, f"{symbol} Company", status, five_months,
+            combine_minervini_statuses(status, five_months),
+        )
 
     def evaluated(self, candidate: CandidateSignal) -> EvaluatedCandidate:
         cpp_stdout = (
@@ -328,6 +332,8 @@ class PipelineOrchestrationTests(unittest.TestCase):
             symbol=candidate.symbol,
             company_name=candidate.company_name,
             minervini_1_month=candidate.minervini_1_month,
+            minervini_5_months=candidate.minervini_5_months,
+            minervini_overall=candidate.minervini_overall,
             json_path=Path(f"{candidate.symbol}.json"),
             fundamental_decision="PASS",
             violation_count=1,
@@ -416,6 +422,14 @@ class PipelineOrchestrationTests(unittest.TestCase):
         ranked = rank_candidates((candidate,))
         self.assertEqual(ranked[0].category, CandidateCategory.WON_REJECTED)
 
+    def test_five_month_yes_places_pass_in_minervini_category(self) -> None:
+        candidate = self.evaluated(
+            self.candidate("FIVE_MONTH", SignalStatus.NO, SignalStatus.YES)
+        )
+        ranked = rank_candidates((candidate,))
+        self.assertEqual(candidate.minervini_overall, SignalStatus.YES)
+        self.assertEqual(ranked[0].category, CandidateCategory.WON_AND_MINERVINI)
+
     def test_ranked_output_handles_empty_categories(self) -> None:
         candidate = self.ranked_candidate("ONLY", "REJECT", SignalStatus.NO, "50.0")
         output = StringIO()
@@ -431,7 +445,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
         with redirect_stdout(output):
             _print_outcome(PipelineOutcome(2, (rejected, passed)))
         text = output.getvalue()
-        source_table_start = text.index("Symbol       Minervini")
+        source_table_start = text.index("Symbol       1M")
         ranked_start = text.index("## Ranked Potential Candidates")
         source_table = text[source_table_start:ranked_start]
         self.assertLess(source_table.index("SOURCE_FIRST"), source_table.index("SOURCE_SECOND"))
@@ -445,7 +459,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
 
     def test_failed_candidates_do_not_enter_ranking(self) -> None:
         success = self.ranked_candidate("GOOD", "PASS", SignalStatus.NO, "50.0")
-        failure = CandidateFailure("BAD", "Bad", SignalStatus.YES, "failed", None, None)
+        failure = CandidateFailure("BAD", "Bad", SignalStatus.YES, SignalStatus.NO, SignalStatus.YES, "failed", None, None)
         output = StringIO()
         with redirect_stdout(output):
             _print_outcome(PipelineOutcome(2, (failure, success)))
@@ -494,14 +508,14 @@ class PipelineOrchestrationTests(unittest.TestCase):
             "automation.run_pipeline._run_pipeline_outcome", return_value=outcome
         ) as runner:
             results = run_pipeline(
-                Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=5
+                Path("primary.csv"), Path("minervini.csv"), Path("five.csv"), Path("reader"), limit=5
             )
         self.assertEqual(
             [result.symbol for result in results],
             ["ONE", "TWO", "THREE", "FOUR", "FIVE"],
         )
         runner.assert_called_once_with(
-            Path("primary.csv"), Path("minervini.csv"), Path("reader"), limit=5
+            Path("primary.csv"), Path("minervini.csv"), Path("five.csv"), Path("reader"), limit=5
         )
 
     def test_internal_runner_selects_only_first_five_in_primary_order(self) -> None:
@@ -530,7 +544,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
         ):
             auth_state.is_file.return_value = True
             _run_pipeline_outcome(
-                Path("primary.csv"), None, Path("reader"), limit=5
+                Path("primary.csv"), None, None, Path("reader"), limit=5
             )
         self.assertEqual(
             [candidate.symbol for candidate in captured],
@@ -570,7 +584,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
         ):
             auth_state.is_file.return_value = True
             outcome = _run_pipeline_outcome(
-                Path("primary.csv"), None, Path("reader"), limit=None
+                Path("primary.csv"), None, None, Path("reader"), limit=None
             )
         self.assertEqual(outcome.requested, 6)
         self.assertEqual(
@@ -583,7 +597,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
             with self.subTest(limit=limit):
                 with self.assertRaisesRegex(ValueError, "greater than zero"):
                     _run_pipeline_outcome(
-                        Path("primary.csv"), None, Path("reader"), limit=limit
+                        Path("primary.csv"), None, None, Path("reader"), limit=limit
                     )
                 with self.assertRaises(SystemExit):
                     _parse_args(
@@ -644,6 +658,8 @@ class PipelineOrchestrationTests(unittest.TestCase):
                     page, self.candidate("AAA", status), Path("reader")
                 )
             self.assertEqual(result.minervini_1_month, status)
+            self.assertEqual(result.minervini_5_months, SignalStatus.NO)
+            self.assertEqual(result.minervini_overall, combine_minervini_statuses(status, SignalStatus.NO))
             self.assertEqual(
                 (result.fundamental_decision, result.violation_count),
                 ("REJECT", 7),
@@ -658,7 +674,7 @@ class PipelineOrchestrationTests(unittest.TestCase):
     def test_summary_counts(self) -> None:
         success = self.evaluated(self.candidate("GOOD"))
         failure = CandidateFailure(
-            "BAD", "Bad Company", SignalStatus.YES, "failed", None, None
+            "BAD", "Bad Company", SignalStatus.YES, SignalStatus.NO, SignalStatus.YES, "failed", None, None
         )
         output = StringIO()
         with redirect_stdout(output):
@@ -673,14 +689,14 @@ class PipelineOrchestrationTests(unittest.TestCase):
     def test_table_contains_only_successes_in_result_order(self) -> None:
         first = self.evaluated(self.candidate("FIRST", SignalStatus.YES))
         failure = CandidateFailure(
-            "FAILED", "Failed Company", SignalStatus.NO, "failed", None, None
+            "FAILED", "Failed Company", SignalStatus.NO, SignalStatus.NO, SignalStatus.NO, "failed", None, None
         )
         third = self.evaluated(self.candidate("THIRD", SignalStatus.UNKNOWN))
         output = StringIO()
         with redirect_stdout(output):
             _print_outcome(PipelineOutcome(3, (first, failure, third)))
         text = output.getvalue()
-        table_start = text.index("Symbol       Minervini")
+        table_start = text.index("Symbol       1M")
         table_end = text.index("\n\n", table_start)
         table = text[table_start:table_end]
         self.assertLess(table.index("FIRST"), table.index("THIRD"))
@@ -695,6 +711,8 @@ class PipelineOrchestrationTests(unittest.TestCase):
         text = output.getvalue()
         self.assertIn("FULL — FULL Company", text)
         self.assertIn("Minervini 1-Month: NO", text)
+        self.assertIn("Minervini 5-Month: NO", text)
+        self.assertIn("Minervini Overall: NO", text)
         self.assertIn(success.cpp_stdout, text)
 
     def test_compact_summary_precedes_verbatim_full_report(self) -> None:
@@ -754,13 +772,13 @@ class PipelineOrchestrationTests(unittest.TestCase):
         minervini_directory = Path("dedicated-minervini")
         with patch(
             "automation.run_pipeline.latest_csv",
-            side_effect=[Path("primary.csv"), Path("minervini.csv")],
+            side_effect=[Path("primary.csv"), Path("minervini.csv"), Path("five.csv")],
         ) as latest:
-            result = resolve_latest_inputs(primary_directory, minervini_directory)
-        self.assertEqual(result, (Path("primary.csv"), Path("minervini.csv")))
+            result = resolve_latest_inputs(primary_directory, minervini_directory, Path("dedicated-five"))
+        self.assertEqual(result, (Path("primary.csv"), Path("minervini.csv"), Path("five.csv")))
         self.assertEqual(
             [call.args[0] for call in latest.call_args_list],
-            [primary_directory, minervini_directory],
+            [primary_directory, minervini_directory, Path("dedicated-five")],
         )
 
     def test_no_shared_root_scan_when_explicit_files_are_used(self) -> None:
@@ -770,12 +788,13 @@ class PipelineOrchestrationTests(unittest.TestCase):
             [
                 "--primary", "primary.csv",
                 "--minervini", "minervini.csv",
+                "--minervini-5-months", "five.csv",
                 "--cpp-executable", "reader",
             ]
         )
         with patch("automation.run_pipeline.latest_csv") as latest:
             result = _resolve_cli_inputs(args)
-        self.assertEqual(result, (Path("primary.csv"), Path("minervini.csv")))
+        self.assertEqual(result, (Path("primary.csv"), Path("minervini.csv"), Path("five.csv")))
         latest.assert_not_called()
 
 

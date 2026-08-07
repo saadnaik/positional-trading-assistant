@@ -13,6 +13,7 @@ from automation.compare_screens import (
     CandidateSignal,
     CompanyNameMismatchWarning,
     SignalStatus,
+    combine_minervini_statuses,
     _parse_args,
     compare_screens,
     main,
@@ -75,7 +76,7 @@ class CompareScreensTests(unittest.TestCase):
         )
         self.assertEqual(
             compare_screens(primary, minervini),
-            (CandidateSignal("AAA", "Alpha", SignalStatus.YES),),
+            (CandidateSignal("AAA", "Alpha", SignalStatus.YES, SignalStatus.UNKNOWN, SignalStatus.YES),),
         )
 
     def test_missing_minervini_input_is_unknown(self) -> None:
@@ -83,6 +84,33 @@ class CompareScreensTests(unittest.TestCase):
         self.assertEqual(
             compare_screens(primary, None)[0].minervini_1_month,
             SignalStatus.UNKNOWN,
+        )
+
+    def test_all_minervini_status_combinations(self) -> None:
+        cases = {
+            (SignalStatus.YES, SignalStatus.YES): SignalStatus.YES,
+            (SignalStatus.YES, SignalStatus.NO): SignalStatus.YES,
+            (SignalStatus.NO, SignalStatus.YES): SignalStatus.YES,
+            (SignalStatus.NO, SignalStatus.NO): SignalStatus.NO,
+            (SignalStatus.YES, SignalStatus.UNKNOWN): SignalStatus.YES,
+            (SignalStatus.UNKNOWN, SignalStatus.YES): SignalStatus.YES,
+            (SignalStatus.NO, SignalStatus.UNKNOWN): SignalStatus.UNKNOWN,
+            (SignalStatus.UNKNOWN, SignalStatus.NO): SignalStatus.UNKNOWN,
+            (SignalStatus.UNKNOWN, SignalStatus.UNKNOWN): SignalStatus.UNKNOWN,
+        }
+        for inputs, expected in cases.items():
+            with self.subTest(inputs=inputs):
+                self.assertEqual(combine_minervini_statuses(*inputs), expected)
+
+    def test_timeframe_memberships_are_independent(self) -> None:
+        primary = self.write_csv("primary.csv", [self.row(1, "ONE", "One"), self.row(2, "FIVE", "Five")])
+        one = self.write_csv("one.csv", [self.row(1, "ONE", "One"), self.row(2, "EXTRA", "Extra")])
+        five = self.write_csv("five.csv", [self.row(1, "FIVE", "Five")])
+        candidates = compare_screens(primary, one, five)
+        self.assertEqual([c.symbol for c in candidates], ["ONE", "FIVE"])
+        self.assertEqual(
+            [(c.minervini_1_month, c.minervini_5_months, c.minervini_overall) for c in candidates],
+            [(SignalStatus.YES, SignalStatus.NO, SignalStatus.YES), (SignalStatus.NO, SignalStatus.YES, SignalStatus.YES)],
         )
 
     def test_primary_order_is_preserved(self) -> None:
@@ -189,8 +217,8 @@ class CompareScreensTests(unittest.TestCase):
             status = main(["--primary", str(primary), "--minervini", str(minervini)])
         self.assertEqual(status, 0)
         self.assertIn("Primary candidates: 1", output.getvalue())
-        self.assertIn("Minervini symbols: 1", output.getvalue())
-        self.assertIn("AAA          Minervini: YES", output.getvalue())
+        self.assertIn("Minervini 1-Month symbols: 1", output.getvalue())
+        self.assertIn("AAA          1M: YES 5M: UNKNOWN Overall: YES", output.getvalue())
 
     def test_latest_directory_cli(self) -> None:
         primary_directory = self.directory / "primary"
@@ -210,8 +238,8 @@ class CompareScreensTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(status, 0)
-        self.assertIn("NEW          Minervini: YES", output.getvalue())
-        self.assertNotIn("OLD          Minervini", output.getvalue())
+        self.assertIn("NEW          1M: YES 5M: UNKNOWN Overall: YES", output.getvalue())
+        self.assertNotIn("OLD          1M:", output.getvalue())
 
     def test_no_minervini_cli_prints_unknown(self) -> None:
         primary = self.write_csv("primary.csv", [self.row(1, "AAA", "Alpha")])
@@ -219,8 +247,9 @@ class CompareScreensTests(unittest.TestCase):
         with patch("sys.stdout", output):
             status = main(["--primary", str(primary)])
         self.assertEqual(status, 0)
-        self.assertIn("Minervini signal: UNKNOWN", output.getvalue())
-        self.assertIn("AAA          Minervini: UNKNOWN", output.getvalue())
+        self.assertIn("Minervini 1-Month symbols: UNKNOWN", output.getvalue())
+        self.assertIn("Minervini 5-Month symbols: UNKNOWN", output.getvalue())
+        self.assertIn("AAA          1M: UNKNOWN 5M: UNKNOWN Overall: UNKNOWN", output.getvalue())
 
     def test_malformed_supplied_minervini_cli_fails_clearly(self) -> None:
         primary = self.write_csv("primary.csv", [self.row(1, "AAA", "Alpha")])

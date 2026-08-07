@@ -39,7 +39,7 @@
   <div class="section-heading"><h2>{{ heading }}</h2><span>{{ ranked_by_category[category]|length }} candidates</span></div>
   {% if ranked_by_category[category] %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Rank</th><th>Symbol</th><th>Company</th><th>Minervini</th><th>Fundamental</th><th>Violations</th><th>Positional Score</th></tr></thead>
+    <thead><tr><th>Rank</th><th>Symbol</th><th>Company</th><th>WON</th><th>Minervini 1M</th><th>Minervini 5M</th><th>Minervini Overall</th><th>Violations</th><th>Positional Score</th></tr></thead>
     <tbody>
     {% for item in ranked_by_category[category] %}
       {% set stock = item.candidate %}
@@ -47,8 +47,10 @@
         <td data-label="Rank">{{ item.rank }}</td>
         <td data-label="Symbol"><a href="{{ url_for('stock_detail', symbol=stock.symbol) }}"><strong>{{ stock.symbol }}</strong></a></td>
         <td data-label="Company">{{ stock.company_name }}</td>
-        <td data-label="Minervini"><span class="pill signal-{{ stock.minervini_1_month.value|lower }}">{{ stock.minervini_1_month.value }}</span></td>
-        <td data-label="Fundamental"><span class="pill decision-{{ stock.fundamental_decision|lower }}">{{ stock.fundamental_decision }}</span></td>
+        <td data-label="WON"><span class="pill decision-{{ stock.fundamental_decision|lower }}">{{ stock.fundamental_decision }}</span></td>
+        <td data-label="Minervini 1M"><span class="pill signal-{{ stock.minervini_1_month.value|lower }}">{{ stock.minervini_1_month.value }}</span></td>
+        <td data-label="Minervini 5M"><span class="pill signal-{{ stock.minervini_5_months.value|lower }}">{{ stock.minervini_5_months.value }}</span></td>
+        <td data-label="Minervini Overall"><span class="pill signal-{{ stock.minervini_overall.value|lower }}">{{ stock.minervini_overall.value }}</span></td>
         <td data-label="Violations">{{ stock.violation_count }}/{{ stock.total_rules }}</td>
         <td data-label="Positional Score"><strong>{{ stock.weighted_positional_score }}</strong></td>
       </tr>

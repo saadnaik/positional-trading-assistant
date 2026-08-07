@@ -18,10 +18,13 @@ logs/*
 !data/incoming/.gitkeep
 !data/incoming/build_your_screen/
 !data/incoming/minervini_1_month/
+!data/incoming/minervini_5_months/
 data/incoming/build_your_screen/*
 data/incoming/minervini_1_month/*
+data/incoming/minervini_5_months/*
 !data/incoming/build_your_screen/.gitkeep
 !data/incoming/minervini_1_month/.gitkeep
+!data/incoming/minervini_5_months/.gitkeep
 !data/archive/.gitkeep
 !data/extracted/.gitkeep
 !logs/.gitkeep

@@ -8,8 +8,15 @@
 </section>
 <section class="metric-strip">
   <article><span>Fundamental Evaluation</span><strong class="decision-{{ candidate.fundamental_decision|lower }} text-status">{{ candidate.fundamental_decision }}</strong></article>
-  <article><span>Minervini 1-Month</span><strong>{{ candidate.minervini_1_month.value }}</strong></article>
   <article><span>Violations</span><strong>{{ candidate.violation_count }}/{{ candidate.total_rules }}</strong></article>
+</section>
+<section class="research-section minervini-confirmation">
+  <div class="section-heading"><h2>Minervini Confirmation</h2><span>Independent technical signals</span></div>
+  <div class="metric-strip">
+    <article><span>1-Month</span><strong>{{ candidate.minervini_1_month.value }}</strong></article>
+    <article><span>5-Month</span><strong>{{ candidate.minervini_5_months.value }}</strong></article>
+    <article><span>Overall</span><strong>{{ candidate.minervini_overall.value }}</strong></article>
+  </div>
 </section>
 
 <section class="research-section">

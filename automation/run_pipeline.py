@@ -57,6 +57,8 @@ class EvaluatedCandidate:
     symbol: str
     company_name: str
     minervini_1_month: SignalStatus
+    minervini_5_months: SignalStatus
+    minervini_overall: SignalStatus
     json_path: Path
     fundamental_decision: str
     violation_count: int
@@ -85,6 +87,8 @@ class CandidateFailure:
     symbol: str
     company_name: str
     minervini_1_month: SignalStatus
+    minervini_5_months: SignalStatus
+    minervini_overall: SignalStatus
     reason: str
     screenshot_path: Path | None
     html_path: Path | None
@@ -135,7 +139,7 @@ def rank_candidates(
         if candidate.fundamental_decision == "PASS":
             category = (
                 CandidateCategory.WON_AND_MINERVINI
-                if candidate.minervini_1_month == SignalStatus.YES
+                if candidate.minervini_overall == SignalStatus.YES
                 else CandidateCategory.WON_ONLY
             )
         else:
@@ -159,17 +163,23 @@ def rank_candidates(
 
 def resolve_latest_inputs(
     primary_directory: Path,
-    minervini_directory: Path | None,
-) -> tuple[Path, Path | None]:
+    minervini_1_month_directory: Path | None,
+    minervini_5_months_directory: Path | None = None,
+) -> tuple[Path, Path | None, Path | None]:
     """Resolve newest CSVs only inside explicitly supplied directories."""
 
     primary_csv = latest_csv(Path(primary_directory))
-    minervini_csv = (
-        latest_csv(Path(minervini_directory))
-        if minervini_directory is not None
+    one_month_csv = (
+        latest_csv(Path(minervini_1_month_directory))
+        if minervini_1_month_directory is not None
         else None
     )
-    return primary_csv, minervini_csv
+    five_month_csv = (
+        latest_csv(Path(minervini_5_months_directory))
+        if minervini_5_months_directory is not None
+        else None
+    )
+    return primary_csv, one_month_csv, five_month_csv
 
 
 def _read_json_symbol(json_path: Path) -> str:
@@ -418,6 +428,8 @@ def process_candidate(
         symbol=candidate.symbol,
         company_name=candidate.company_name,
         minervini_1_month=candidate.minervini_1_month,
+        minervini_5_months=candidate.minervini_5_months,
+        minervini_overall=candidate.minervini_overall,
         json_path=json_path,
         fundamental_decision=summary.fundamental_decision,
         violation_count=summary.violation_count,
@@ -476,6 +488,8 @@ def _process_candidates_in_context(
                     symbol=candidate.symbol,
                     company_name=candidate.company_name,
                     minervini_1_month=candidate.minervini_1_month,
+                    minervini_5_months=candidate.minervini_5_months,
+                    minervini_overall=candidate.minervini_overall,
                     reason=str(error),
                     screenshot_path=screenshot_path,
                     html_path=html_path,
@@ -490,7 +504,8 @@ def _process_candidates_in_context(
 
 def run_pipeline_outcome(
     primary_csv: Path,
-    minervini_csv: Path | None,
+    minervini_1_month_csv: Path | None,
+    minervini_5_months_csv: Path | None,
     cpp_executable: Path,
     *,
     limit: int | None = 5,
@@ -498,7 +513,9 @@ def run_pipeline_outcome(
 ) -> PipelineOutcome:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be greater than zero")
-    candidates = compare_screens(primary_csv, minervini_csv)
+    candidates = compare_screens(
+        primary_csv, minervini_1_month_csv, minervini_5_months_csv
+    )
     selected = candidates if limit is None else candidates[:limit]
     if not AUTH_STATE.is_file():
         raise PipelineError(
@@ -523,7 +540,8 @@ def run_pipeline_outcome(
 
 def run_pipeline(
     primary_csv: Path,
-    minervini_csv: Path | None,
+    minervini_1_month_csv: Path | None,
+    minervini_5_months_csv: Path | None,
     cpp_executable: Path,
     *,
     limit: int | None = 5,
@@ -531,7 +549,11 @@ def run_pipeline(
     """Run the prototype and return successful evaluations in primary order."""
 
     return _run_pipeline_outcome(
-        primary_csv, minervini_csv, cpp_executable, limit=limit
+        primary_csv,
+        minervini_1_month_csv,
+        minervini_5_months_csv,
+        cpp_executable,
+        limit=limit,
     ).successful
 
 
@@ -560,6 +582,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     minervini.add_argument(
         "--minervini-latest-from", type=Path, metavar="DIRECTORY"
     )
+    five_months = parser.add_mutually_exclusive_group()
+    five_months.add_argument("--minervini-5-months", type=Path, metavar="FILE")
+    five_months.add_argument(
+        "--minervini-5-months-latest-from", type=Path, metavar="DIRECTORY"
+    )
     parser.add_argument("--cpp-executable", type=Path, required=True)
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--limit", type=_positive_limit)
@@ -570,31 +597,40 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def _resolve_cli_inputs(args: argparse.Namespace) -> tuple[Path, Path | None]:
+def _resolve_cli_inputs(
+    args: argparse.Namespace,
+) -> tuple[Path, Path | None, Path | None]:
     primary_csv = (
         latest_csv(args.primary_latest_from)
         if args.primary_latest_from is not None
         else args.primary
     )
-    minervini_csv = (
+    one_month_csv = (
         latest_csv(args.minervini_latest_from)
         if args.minervini_latest_from is not None
         else args.minervini
     )
-    return primary_csv, minervini_csv
+    five_month_csv = (
+        latest_csv(args.minervini_5_months_latest_from)
+        if args.minervini_5_months_latest_from is not None
+        else args.minervini_5_months
+    )
+    return primary_csv, one_month_csv, five_month_csv
 
 
 def _print_outcome(outcome: PipelineOutcome) -> None:
     successful = outcome.successful
     print(
-        f"{'Symbol':<12} {'Minervini':<11} {'Fundamental':<13} "
+        f"{'Symbol':<12} {'1M':<8} {'5M':<8} {'Overall':<9} {'Fundamental':<13} "
         f"{'Violations':<12} Positional Score"
     )
-    print("-" * 65)
+    print("-" * 88)
     for result in successful:
         violations = f"{result.violation_count}/{result.total_rules}"
         print(
-            f"{result.symbol:<12} {result.minervini_1_month.value:<11} "
+            f"{result.symbol:<12} {result.minervini_1_month.value:<8} "
+            f"{result.minervini_5_months.value:<8} "
+            f"{result.minervini_overall.value:<9} "
             f"{result.fundamental_decision:<13} "
             f"{violations:<12} "
             f"{result.weighted_positional_score}"
@@ -616,16 +652,18 @@ def _print_outcome(outcome: PipelineOutcome) -> None:
             print("No candidates.")
             continue
         print(
-            f"{'Rank':<6} {'Symbol':<12} {'Minervini':<11} "
+            f"{'Rank':<6} {'Symbol':<12} {'1M':<8} {'5M':<8} {'Overall':<9} "
             f"{'Fundamental':<13} {'Violations':<12} Positional Score"
         )
-        print("-" * 72)
+        print("-" * 94)
         for ranked_candidate in category_candidates:
             result = ranked_candidate.candidate
             violations = f"{result.violation_count}/{result.total_rules}"
             print(
                 f"{ranked_candidate.rank:<6} {result.symbol:<12} "
-                f"{result.minervini_1_month.value:<11} "
+                f"{result.minervini_1_month.value:<8} "
+                f"{result.minervini_5_months.value:<8} "
+                f"{result.minervini_overall.value:<9} "
                 f"{result.fundamental_decision:<13} {violations:<12} "
                 f"{result.weighted_positional_score}"
             )
@@ -641,6 +679,8 @@ def _print_outcome(outcome: PipelineOutcome) -> None:
         print("=" * 40)
         print(f"{result.symbol} — {result.company_name}")
         print(f"Minervini 1-Month: {result.minervini_1_month.value}")
+        print(f"Minervini 5-Month: {result.minervini_5_months.value}")
+        print(f"Minervini Overall: {result.minervini_overall.value}")
         print(f"Fundamental Evaluation: {result.fundamental_decision}")
         print(f"Violations: {result.violation_count}/{result.total_rules}")
         print(
@@ -700,10 +740,11 @@ def _print_outcome(outcome: PipelineOutcome) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        primary_csv, minervini_csv = _resolve_cli_inputs(args)
+        primary_csv, one_month_csv, five_month_csv = _resolve_cli_inputs(args)
         outcome = run_pipeline_outcome(
             primary_csv,
-            minervini_csv,
+            one_month_csv,
+            five_month_csv,
             args.cpp_executable,
             limit=None if args.all else args.limit,
         )

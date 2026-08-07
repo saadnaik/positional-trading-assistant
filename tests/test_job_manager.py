@@ -14,7 +14,7 @@ from web.models import MarketSmithSessionStatus, RunStatus
 
 def result() -> AnalysisRunResult:
     now = datetime.now(timezone.utc)
-    return AnalysisRunResult(now, now, Path("a.csv"), Path("b.csv"), 0, (), (), ())
+    return AnalysisRunResult(now, now, Path("a.csv"), Path("b.csv"), Path("c.csv"), 0, (), (), ())
 
 
 def wait_until(predicate, timeout: float = 2.0) -> None:

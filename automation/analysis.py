@@ -11,6 +11,7 @@ from typing import Callable
 from automation.export_screen import (
     BUILD_YOUR_SCREEN,
     MINERVINI_1_MONTH,
+    MINERVINI_5_MONTHS,
     ScreenConfig,
     export_screen,
 )
@@ -48,7 +49,8 @@ class AnalysisRunResult:
     started_at: datetime
     completed_at: datetime
     primary_csv: Path
-    minervini_csv: Path
+    minervini_1_month_csv: Path
+    minervini_5_months_csv: Path
     candidates_requested: int
     successful: tuple[EvaluatedCandidate, ...]
     failed: tuple[CandidateFailure, ...]
@@ -65,7 +67,7 @@ def run_complete_analysis(
     progress_callback: ProgressCallback | None = None,
     exporter: Exporter | None = None,
 ) -> AnalysisRunResult:
-    """Export both fresh screens, evaluate every primary candidate, and rank."""
+    """Export all three fresh screens, evaluate every primary candidate, and rank."""
 
     started_at = datetime.now(timezone.utc)
     export = exporter or export_screen
@@ -78,7 +80,10 @@ def run_complete_analysis(
     primary_csv = export(BUILD_YOUR_SCREEN, pause_on_failure=False)
 
     report(AnalysisProgress(AnalysisPhase.EXPORTING_MINERVINI))
-    minervini_csv = export(MINERVINI_1_MONTH, pause_on_failure=False)
+    minervini_1_month_csv = export(MINERVINI_1_MONTH, pause_on_failure=False)
+
+    report(AnalysisProgress(AnalysisPhase.EXPORTING_MINERVINI))
+    minervini_5_months_csv = export(MINERVINI_5_MONTHS, pause_on_failure=False)
 
     report(AnalysisProgress(AnalysisPhase.COMPARING_SCREENS))
 
@@ -94,7 +99,8 @@ def run_complete_analysis(
 
     outcome = run_pipeline_outcome(
         primary_csv,
-        minervini_csv,
+        minervini_1_month_csv,
+        minervini_5_months_csv,
         Path(cpp_executable),
         limit=None,
         progress_callback=candidate_progress,
@@ -111,7 +117,8 @@ def run_complete_analysis(
         started_at=started_at,
         completed_at=completed_at,
         primary_csv=primary_csv,
-        minervini_csv=minervini_csv,
+        minervini_1_month_csv=minervini_1_month_csv,
+        minervini_5_months_csv=minervini_5_months_csv,
         candidates_requested=outcome.requested,
         successful=outcome.successful,
         failed=outcome.failed,

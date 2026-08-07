@@ -5,15 +5,16 @@ import unittest
 from unittest.mock import Mock, patch
 
 from automation.analysis import AnalysisPhase, run_complete_analysis
-from automation.export_screen import BUILD_YOUR_SCREEN, MINERVINI_1_MONTH
+from automation.export_screen import BUILD_YOUR_SCREEN, MINERVINI_1_MONTH, MINERVINI_5_MONTHS
 from automation.run_pipeline import PipelineOutcome
 
 
 class CompleteAnalysisTests(unittest.TestCase):
     def test_fresh_exports_feed_exact_paths_and_all_candidates(self) -> None:
         primary = Path("fresh-primary.csv")
-        minervini = Path("fresh-minervini.csv")
-        exporter = Mock(side_effect=[primary, minervini])
+        one_month = Path("fresh-minervini-1m.csv")
+        five_months = Path("fresh-minervini-5m.csv")
+        exporter = Mock(side_effect=[primary, one_month, five_months])
         progress = []
         outcome = PipelineOutcome(requested=3, results=())
         with patch("automation.analysis.run_pipeline_outcome", return_value=outcome) as pipeline:
@@ -26,14 +27,16 @@ class CompleteAnalysisTests(unittest.TestCase):
             [
                 unittest.mock.call(BUILD_YOUR_SCREEN, pause_on_failure=False),
                 unittest.mock.call(MINERVINI_1_MONTH, pause_on_failure=False),
+                unittest.mock.call(MINERVINI_5_MONTHS, pause_on_failure=False),
             ],
         )
         args, kwargs = pipeline.call_args
-        self.assertEqual(args, (primary, minervini, Path("reader")))
+        self.assertEqual(args, (primary, one_month, five_months, Path("reader")))
         self.assertIsNone(kwargs["limit"])
         self.assertTrue(callable(kwargs["progress_callback"]))
         self.assertEqual(result.primary_csv, primary)
-        self.assertEqual(result.minervini_csv, minervini)
+        self.assertEqual(result.minervini_1_month_csv, one_month)
+        self.assertEqual(result.minervini_5_months_csv, five_months)
         self.assertEqual(result.candidates_requested, 3)
         self.assertTrue(result.started_at.tzinfo)
         self.assertTrue(result.completed_at.tzinfo)
@@ -56,8 +59,16 @@ class CompleteAnalysisTests(unittest.TestCase):
         self.assertEqual(exporter.call_count, 2)
         pipeline.assert_not_called()
 
+    def test_five_month_export_failure_stops_without_pipeline(self) -> None:
+        exporter = Mock(side_effect=[Path("primary.csv"), Path("one.csv"), RuntimeError("5m failed")])
+        with patch("automation.analysis.run_pipeline_outcome") as pipeline:
+            with self.assertRaisesRegex(RuntimeError, "5m failed"):
+                run_complete_analysis(exporter=exporter)
+        self.assertEqual(exporter.call_count, 3)
+        pipeline.assert_not_called()
+
     def test_candidate_progress_is_forwarded_without_interpretation(self) -> None:
-        exporter = Mock(side_effect=[Path("a.csv"), Path("b.csv")])
+        exporter = Mock(side_effect=[Path("a.csv"), Path("b.csv"), Path("c.csv")])
         observed = []
 
         def pipeline(*args, **kwargs):

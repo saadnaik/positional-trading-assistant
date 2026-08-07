@@ -49,9 +49,22 @@ MINERVINI_1_MONTH = ScreenConfig(
     role="signal",
 )
 
+MINERVINI_5_MONTHS = ScreenConfig(
+    name="Mark Minervini 5-Month",
+    cli_name="minervini-5-months",
+    url=(
+        "https://marketsmithindia.com/mstool/list/marketsmith-stock-screens/"
+        "minervini-trend-template-5-months/idealists.jsp#/"
+    ),
+    output_directory=Path("data/incoming/minervini_5_months"),
+    expected_filename_hint="Minervini_Trend_Template-5_Months",
+    role="signal",
+)
+
 SCREENS = {
     "build-your-screen": BUILD_YOUR_SCREEN,
     "minervini": MINERVINI_1_MONTH,
+    "minervini-5-months": MINERVINI_5_MONTHS,
 }
 
 LANDING_URL = "https://marketsmithindia.com/mstool/landing.jsp#/"

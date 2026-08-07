@@ -19,9 +19,6 @@ EVALUATION_URL = (
     "https://marketsmithindia.com/mstool/eval/list/{symbol}/evaluation.jsp"
 )
 SUMMARY_SELECTOR = "#slide-details_placeholder"
-PERCENTAGE_VALUE = re.compile(r"^[+-]?\d+(?:\.\d+)?%$")
-NUMERIC_VALUE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
-UNAVAILABLE_VALUES = {"", "n/a", "na", "-"}
 EPS_LABEL = re.compile(r"^\s*EPS\s+Growth\s+Rate\s*$", re.IGNORECASE)
 
 
@@ -180,26 +177,6 @@ def extract_value(summary: Locator, label: str) -> str:
     return value
 
 
-def validate_percentage(label: str, value: str) -> str:
-    if value.casefold() in UNAVAILABLE_VALUES:
-        return value
-    if not PERCENTAGE_VALUE.fullmatch(value):
-        raise SummaryExtractionError(
-            f"Summary field {label!r} has malformed percentage text: {value!r}."
-        )
-    return value
-
-
-def validate_numeric(label: str, value: str) -> str:
-    if value.casefold() in UNAVAILABLE_VALUES:
-        return value
-    if not NUMERIC_VALUE.fullmatch(value):
-        raise SummaryExtractionError(
-            f"Summary field {label!r} has malformed numeric text: {value!r}."
-        )
-    return value
-
-
 def wait_for_summary_metrics(page: Page) -> None:
     summary = page.locator(SUMMARY_SELECTOR)
     summary.wait_for(state="attached", timeout=60_000)
@@ -227,15 +204,13 @@ def extract_summary_metrics(page: Page) -> SummaryMetrics:
     summary = page.locator(SUMMARY_SELECTOR)
     summary.wait_for(state="attached", timeout=60_000)
 
-    eps_growth_rate = validate_percentage(
-        "EPS Growth Rate", extract_value(summary, "EPS Growth Rate")
-    )
-    earnings_stability = validate_numeric(
-        "Earnings Stability", extract_value(summary, "Earnings Stability")
-    )
-    return_on_equity = validate_percentage(
-        "Return on Equity", extract_value(summary, "Return on Equity")
-    )
+    # Financial-value syntax belongs to the C++ interpretation layer. Once the
+    # expected label and readable value element have been established, retain
+    # MarketSmith's whitespace-normalized text verbatim, including malformed or
+    # unavailable values.
+    eps_growth_rate = extract_value(summary, "EPS Growth Rate")
+    earnings_stability = extract_value(summary, "Earnings Stability")
+    return_on_equity = extract_value(summary, "Return on Equity")
 
     return SummaryMetrics(
         eps_growth_rate=eps_growth_rate,

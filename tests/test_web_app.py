@@ -8,7 +8,7 @@ import unittest
 import httpx
 
 from automation.analysis import AnalysisPhase, AnalysisRunResult
-from automation.compare_screens import SignalStatus
+from automation.compare_screens import SignalStatus, combine_minervini_statuses
 from automation.run_pipeline import (
     CandidateCategory,
     CandidateFailure,
@@ -23,14 +23,17 @@ from web.models import MarketSmithSessionStatus, RunSnapshot, RunStatus
 def candidate(
     symbol: str,
     decision: str,
-    signal: SignalStatus,
+    one_month: SignalStatus,
     score: str,
     violations: int,
+    five_months: SignalStatus = SignalStatus.NO,
 ) -> EvaluatedCandidate:
     return EvaluatedCandidate(
         symbol=symbol,
         company_name=f"{symbol} Research Industries",
-        minervini_1_month=signal,
+        minervini_1_month=one_month,
+        minervini_5_months=five_months,
+        minervini_overall=combine_minervini_statuses(one_month, five_months),
         json_path=Path("private") / f"{symbol}.json",
         fundamental_decision=decision,
         violation_count=violations,
@@ -65,13 +68,16 @@ def completed_result() -> AnalysisRunResult:
         started_at=now,
         completed_at=now,
         primary_csv=Path("/private/primary.csv"),
-        minervini_csv=Path("/private/minervini.csv"),
+        minervini_1_month_csv=Path("/private/minervini-1m.csv"),
+        minervini_5_months_csv=Path("/private/minervini-5m.csv"),
         candidates_requested=4,
         successful=stocks,
         failed=(
             CandidateFailure(
                 "FAILED",
                 "Failed Research Ltd",
+                SignalStatus.NO,
+                SignalStatus.NO,
                 SignalStatus.NO,
                 "C++ stdout: token=secret /private/report.json",
                 Path("/private/failure.png"),
@@ -182,6 +188,9 @@ class FalconWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(text.index("GOLDIAM"), text.index("WONONLY"))
         self.assertLess(text.index("WONONLY"), text.index("REJECT"))
         self.assertIn("Analysis Failures", text)
+        self.assertIn("Minervini 1M", text)
+        self.assertIn("Minervini 5M", text)
+        self.assertIn("Minervini Overall", text)
         self.assertIn("C++ stock evaluation failed", text)
         self.assertNotIn("token=secret", text)
         self.assertNotIn("/private", text)
@@ -198,6 +207,10 @@ class FalconWebTests(unittest.IsolatedAsyncioTestCase):
             "Shortfall: 2 percentage points",
             "7.360 / 8",
             "Full 12-Rule Analysis",
+            "Minervini Confirmation",
+            "1-Month",
+            "5-Month",
+            "Overall",
             "View full analysis",
             "SECRET-FREE FULL RULE REPORT",
         ):
