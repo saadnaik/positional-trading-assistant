@@ -13,6 +13,7 @@ auth/*.json
 data/incoming/*
 data/archive/*
 data/extracted/*
+data/state/*
 logs/*
 
 !data/incoming/.gitkeep
@@ -27,6 +28,7 @@ data/incoming/minervini_5_months/*
 !data/incoming/minervini_5_months/.gitkeep
 !data/archive/.gitkeep
 !data/extracted/.gitkeep
+!data/state/.gitkeep
 !logs/.gitkeep
 
 # Generated debug files

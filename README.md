@@ -68,6 +68,12 @@ persistent runtime state:
 - `data/` at `/app/data`
 - `logs/` at `/app/logs`
 
+The latest completed dashboard result is written atomically to
+`data/state/latest_analysis.json`. Because `data/` is mounted, Falcon restores
+that result after a container or VM restart, including ranked tables and stock
+details. Starting or failing a newer analysis does not erase the previous
+completed snapshot; only a successfully completed analysis replaces it.
+
 The saved `auth/marketsmith_state.json` is never copied into the image. Create or
 refresh it with the existing host-side, visible `automation/login.py` workflow,
 then mount it through Compose. Remote interactive session refresh remains an

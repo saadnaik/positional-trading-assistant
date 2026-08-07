@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
+import logging
 from threading import Lock, Thread
 from typing import Callable
 
 from automation.analysis import AnalysisProgress, AnalysisRunResult, run_complete_analysis
 from automation.export_screen import AUTH_STATE, SessionExpiredError
 from web.models import MarketSmithSessionStatus, RunSnapshot, RunStatus, safe_error_message
+from web.persistence import AnalysisResultStore, PersistenceError
 
 
 AnalysisRunner = Callable[..., AnalysisRunResult]
+LOGGER = logging.getLogger(__name__)
 
 
 class AnalysisJobManager:
@@ -21,10 +24,17 @@ class AnalysisJobManager:
         runner: AnalysisRunner = run_complete_analysis,
         *,
         auth_state: Path = AUTH_STATE,
+        result_store: AnalysisResultStore | None = None,
     ) -> None:
         self._runner = runner
+        self._result_store = result_store or AnalysisResultStore()
         self._lock = Lock()
-        self._status = RunStatus.IDLE
+        restored_result = None
+        try:
+            restored_result = self._result_store.load()
+        except PersistenceError as error:
+            LOGGER.warning("Falcon analysis restore skipped: %s", safe_error_message(error))
+        self._status = RunStatus.COMPLETED if restored_result is not None else RunStatus.IDLE
         self._session_status = (
             MarketSmithSessionStatus.SAVED
             if auth_state.is_file()
@@ -35,9 +45,11 @@ class AnalysisJobManager:
         self._processed = 0
         self._total = None
         self._error = None
-        self._started_at = None
-        self._completed_at = None
-        self._latest_result: AnalysisRunResult | None = None
+        self._started_at = restored_result.started_at if restored_result is not None else None
+        self._completed_at = (
+            restored_result.completed_at if restored_result is not None else None
+        )
+        self._latest_result: AnalysisRunResult | None = restored_result
         self._thread: Thread | None = None
 
     def start(self) -> bool:
@@ -74,6 +86,10 @@ class AnalysisJobManager:
                 if isinstance(error, SessionExpiredError) or "expired" in str(error).casefold():
                     self._session_status = MarketSmithSessionStatus.EXPIRED
             return
+        try:
+            self._result_store.save(result)
+        except PersistenceError as error:
+            LOGGER.warning("Falcon analysis persistence failed: %s", safe_error_message(error))
         with self._lock:
             self._status = RunStatus.COMPLETED
             self._session_status = MarketSmithSessionStatus.VALID
