@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,21 @@ from extract.summary import AUTH_STATE, EVALUATION_URL, confirm_stock_page
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = PROJECT_ROOT / "logs"
+RULE_SEPARATOR = "\n--------------------------------------------------\n"
+
+
+@dataclass(frozen=True)
+class ViolationSummary:
+    rule_id: str
+    description: str
+    raw_block: str
+    weight: str | None = None
+    actual: str | None = None
+    requirement: str | None = None
+    distance: str | None = None
+    credit: str | None = None
+    contribution: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +48,7 @@ class CppEvaluationSummary:
     total_rules: int
     weighted_positional_score: str
     stdout: str
+    violations_summary: tuple[ViolationSummary, ...]
 
 
 @dataclass(frozen=True)
@@ -45,6 +62,21 @@ class EvaluatedCandidate:
     total_rules: int
     weighted_positional_score: str
     cpp_stdout: str
+    violations_summary: tuple[ViolationSummary, ...]
+
+
+class CandidateCategory(str, Enum):
+    WON_AND_MINERVINI = "WON + Minervini"
+    WON_ONLY = "WON Only"
+    WON_REJECTED = "WON Rejected"
+
+
+@dataclass(frozen=True)
+class RankedCandidate:
+    rank: int
+    category: CandidateCategory
+    candidate: EvaluatedCandidate
+    source_index: int
 
 
 @dataclass(frozen=True)
@@ -84,6 +116,43 @@ class PipelineError(RuntimeError):
 
 class CppEvaluationError(PipelineError):
     """Raised when stock_reader fails or emits an invalid summary."""
+
+
+def rank_candidates(
+    candidates: tuple[EvaluatedCandidate, ...],
+) -> tuple[RankedCandidate, ...]:
+    """Rank authoritative C++ results without changing their evaluation values."""
+
+    category_order = {
+        CandidateCategory.WON_AND_MINERVINI: 0,
+        CandidateCategory.WON_ONLY: 1,
+        CandidateCategory.WON_REJECTED: 2,
+    }
+    categorized: list[tuple[CandidateCategory, int, EvaluatedCandidate]] = []
+    for source_index, candidate in enumerate(candidates):
+        if candidate.fundamental_decision == "PASS":
+            category = (
+                CandidateCategory.WON_AND_MINERVINI
+                if candidate.minervini_1_month == SignalStatus.YES
+                else CandidateCategory.WON_ONLY
+            )
+        else:
+            category = CandidateCategory.WON_REJECTED
+        categorized.append((category, source_index, candidate))
+
+    categorized.sort(
+        key=lambda item: (
+            category_order[item[0]],
+            -Decimal(item[2].weighted_positional_score),
+            item[1],
+        )
+    )
+    return tuple(
+        RankedCandidate(rank, category, candidate, source_index)
+        for rank, (category, source_index, candidate) in enumerate(
+            categorized, start=1
+        )
+    )
 
 
 def resolve_latest_inputs(
@@ -151,6 +220,61 @@ def _single_summary_value(
             completed,
         )
     return matches[0]
+
+
+def _optional_line(block: str, label: str) -> str | None:
+    match = re.search(
+        rf"^{re.escape(label)}:\s*(.+?)\s*$", block, flags=re.MULTILINE
+    )
+    return match.group(1) if match is not None else None
+
+
+def _optional_section(block: str, label: str) -> str | None:
+    next_labels = (
+        "Weight|Actual values|Requirement|Closeness / distance|"
+        "Scoring calculation|Weighted credit|Contribution|Reason"
+    )
+    match = re.search(
+        rf"^{re.escape(label)}:\s*\n(.*?)"
+        rf"(?=^(?:{next_labels}):|\Z)",
+        block,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def parse_violation_summaries(stdout: str) -> tuple[ViolationSummary, ...]:
+    """Select explicit C++ VIOLATION blocks without evaluating rule logic."""
+
+    violations: list[ViolationSummary] = []
+    for raw_block in stdout.split(RULE_SEPARATOR)[1:]:
+        first_line, _, remainder = raw_block.partition("\n")
+        header = re.fullmatch(r"R([1-9]|1[0-2]) (PASS|VIOLATION)", first_line)
+        if header is None or header.group(2) != "VIOLATION":
+            continue
+
+        description_line, separator, _ = remainder.partition("\n")
+        description = description_line.strip() if separator else remainder.strip()
+        if description.endswith(":") or description.startswith("Weight:"):
+            description = ""
+        violations.append(
+            ViolationSummary(
+                rule_id=f"R{header.group(1)}",
+                description=description,
+                raw_block=raw_block,
+                weight=_optional_line(raw_block, "Weight"),
+                actual=_optional_section(raw_block, "Actual values"),
+                requirement=_optional_section(raw_block, "Requirement"),
+                distance=_optional_section(raw_block, "Closeness / distance"),
+                credit=_optional_line(raw_block, "Weighted credit"),
+                contribution=_optional_line(raw_block, "Contribution"),
+                reason=_optional_section(raw_block, "Reason"),
+            )
+        )
+    return tuple(violations)
 
 
 def _evaluate_with_cpp_for_symbol(
@@ -247,6 +371,7 @@ def _evaluate_with_cpp_for_symbol(
         total_rules=12,
         weighted_positional_score=weighted_score,
         stdout=completed.stdout,
+        violations_summary=parse_violation_summaries(completed.stdout),
     )
 
 
@@ -297,6 +422,7 @@ def process_candidate(
         total_rules=summary.total_rules,
         weighted_positional_score=summary.weighted_positional_score,
         cpp_stdout=summary.stdout,
+        violations_summary=summary.violations_summary,
     )
 
 
@@ -359,17 +485,12 @@ def _run_pipeline_outcome(
     minervini_csv: Path | None,
     cpp_executable: Path,
     *,
-    limit: int = 5,
+    limit: int | None = 5,
 ) -> PipelineOutcome:
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         raise ValueError("limit must be greater than zero")
     candidates = compare_screens(primary_csv, minervini_csv)
-    if len(candidates) < limit:
-        raise PipelineError(
-            f"Requested {limit} candidates, but the primary CSV contains only "
-            f"{len(candidates)}."
-        )
-    selected = candidates[:limit]
+    selected = candidates if limit is None else candidates[:limit]
     if not AUTH_STATE.is_file():
         raise PipelineError(
             f"Authentication state not found: {AUTH_STATE}. "
@@ -390,7 +511,7 @@ def run_pipeline(
     minervini_csv: Path | None,
     cpp_executable: Path,
     *,
-    limit: int = 5,
+    limit: int | None = 5,
 ) -> tuple[EvaluatedCandidate, ...]:
     """Run the prototype and return successful evaluations in primary order."""
 
@@ -420,8 +541,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--minervini-latest-from", type=Path, metavar="DIRECTORY"
     )
     parser.add_argument("--cpp-executable", type=Path, required=True)
-    parser.add_argument("--limit", type=_positive_limit, default=5)
-    return parser.parse_args(argv)
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--limit", type=_positive_limit)
+    scope.add_argument("--all", action="store_true")
+    args = parser.parse_args(argv)
+    if args.limit is None and not args.all:
+        args.limit = 5
+    return args
 
 
 def _resolve_cli_inputs(args: argparse.Namespace) -> tuple[Path, Path | None]:
@@ -439,23 +565,6 @@ def _resolve_cli_inputs(args: argparse.Namespace) -> tuple[Path, Path | None]:
 
 
 def _print_outcome(outcome: PipelineOutcome) -> None:
-    for result in outcome.results:
-        print(f"Symbol: {result.symbol}")
-        if isinstance(result, CandidateFailure):
-            print("Status: FAILED")
-            print(f"Reason: {result.reason}")
-        else:
-            print(f"Company: {result.company_name}")
-            print(f"Minervini 1-Month: {result.minervini_1_month.value}")
-            print(f"Fundamental Evaluation: {result.fundamental_decision}")
-            print(f"Violations: {result.violation_count}/{result.total_rules}")
-            print(
-                "Weighted Positional Score: "
-                f"{result.weighted_positional_score}/100"
-            )
-            print(f"JSON output: {result.json_path}")
-        print()
-
     successful = outcome.successful
     print(
         f"{'Symbol':<12} {'Minervini':<11} {'Fundamental':<13} "
@@ -471,13 +580,95 @@ def _print_outcome(outcome: PipelineOutcome) -> None:
             f"{result.weighted_positional_score}"
         )
 
-    for result in successful:
+    ranked = rank_candidates(successful)
+    print("\n## Ranked Potential Candidates")
+    category_headings = (
+        (CandidateCategory.WON_AND_MINERVINI, "1. WON + Minervini"),
+        (CandidateCategory.WON_ONLY, "2. WON Only"),
+        (CandidateCategory.WON_REJECTED, "3. WON Rejected"),
+    )
+    for category, heading in category_headings:
+        print(f"\n### {heading}\n")
+        category_candidates = tuple(
+            result for result in ranked if result.category == category
+        )
+        if not category_candidates:
+            print("No candidates.")
+            continue
+        print(
+            f"{'Rank':<6} {'Symbol':<12} {'Minervini':<11} "
+            f"{'Fundamental':<13} {'Violations':<12} Positional Score"
+        )
+        print("-" * 72)
+        for ranked_candidate in category_candidates:
+            result = ranked_candidate.candidate
+            violations = f"{result.violation_count}/{result.total_rules}"
+            print(
+                f"{ranked_candidate.rank:<6} {result.symbol:<12} "
+                f"{result.minervini_1_month.value:<11} "
+                f"{result.fundamental_decision:<13} {violations:<12} "
+                f"{result.weighted_positional_score}"
+            )
+
+    if outcome.failed:
+        print("\nCandidate failures:")
+        for failure in outcome.failed:
+            print(f"{failure.symbol}: {failure.reason}")
+
+    for ranked_candidate in ranked:
+        result = ranked_candidate.candidate
         print()
         print("=" * 40)
         print(f"{result.symbol} — {result.company_name}")
         print(f"Minervini 1-Month: {result.minervini_1_month.value}")
+        print(f"Fundamental Evaluation: {result.fundamental_decision}")
+        print(f"Violations: {result.violation_count}/{result.total_rules}")
+        print(
+            "Weighted Positional Score: "
+            f"{result.weighted_positional_score}/100"
+        )
         print("=" * 40)
-        print()
+
+        print("\nViolations:\n")
+        if not result.violations_summary:
+            print(
+                "None"
+                if result.violation_count == 0
+                else "Details available in full report"
+            )
+        for violation in result.violations_summary:
+            description = violation.description or "Details available in full report"
+            print(f"{violation.rule_id} — {description}")
+            if violation.actual is not None:
+                print(f"Actual:\n{violation.actual}")
+            if violation.requirement is not None:
+                print(f"Requirement:\n{violation.requirement}")
+            if violation.distance is not None:
+                print(f"Closeness / distance:\n{violation.distance}")
+            if violation.weight is not None:
+                print(f"Weight: {violation.weight}")
+            if violation.credit is not None:
+                print(f"Credit: {violation.credit}")
+            if violation.contribution is not None:
+                print(f"Contribution: {violation.contribution}")
+            if violation.reason is not None:
+                print(f"Reason:\n{violation.reason}")
+            required_details = (
+                violation.description,
+                violation.weight,
+                violation.actual,
+                violation.requirement,
+                violation.credit,
+                violation.contribution,
+                violation.reason,
+            )
+            if any(value is None or value == "" for value in required_details):
+                print("Details available in full report")
+            print()
+
+        print("-" * 40)
+        print("Full C++ report")
+        print("-" * 40)
         print(result.cpp_stdout, end="" if result.cpp_stdout.endswith("\n") else "\n")
 
     print()
@@ -494,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
             primary_csv,
             minervini_csv,
             args.cpp_executable,
-            limit=args.limit,
+            limit=None if args.all else args.limit,
         )
     except (MarketSmithCsvError, PipelineError, OSError, ValueError) as error:
         print(f"Pipeline failed: {error}")
