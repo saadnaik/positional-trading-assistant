@@ -12,6 +12,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+FetchContent_Declare(
+    boost_headers
+    URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.xz
+    URL_HASH SHA256=f48b48390380cfb94a629872346e3a81370dc498896f16019ade727ab72eb1ec
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(BOOST_INCLUDE_LIBRARIES multiprecision)
+FetchContent_MakeAvailable(boost_headers)
+
 add_library(stock_json_reader STATIC
     src/json_reader.cpp
 )
@@ -33,10 +42,19 @@ target_include_directories(won_rules PUBLIC include)
 target_link_libraries(won_rules PUBLIC stock_financial_utils)
 target_compile_features(won_rules PUBLIC cxx_std_20)
 
+add_library(positional_score STATIC
+    src/positional_score.cpp
+)
+target_include_directories(positional_score PUBLIC include)
+target_link_libraries(positional_score
+    PUBLIC won_rules stock_financial_utils Boost::multiprecision
+)
+target_compile_features(positional_score PUBLIC cxx_std_20)
+
 add_executable(stock_reader
     src/main.cpp
 )
-target_link_libraries(stock_reader PRIVATE stock_json_reader won_rules)
+target_link_libraries(stock_reader PRIVATE stock_json_reader won_rules positional_score)
 target_compile_features(stock_reader PRIVATE cxx_std_20)
 
 include(CTest)
@@ -61,12 +79,20 @@ if(BUILD_TESTING)
     target_link_libraries(won_rules_tests PRIVATE won_rules)
     target_compile_features(won_rules_tests PRIVATE cxx_std_20)
     add_test(NAME won_rules_tests COMMAND won_rules_tests)
+
+    add_executable(positional_score_tests
+        tests/positional_score_tests.cpp
+    )
+    target_link_libraries(positional_score_tests PRIVATE positional_score)
+    target_compile_features(positional_score_tests PRIVATE cxx_std_20)
+    add_test(NAME positional_score_tests COMMAND positional_score_tests)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(stock_json_reader PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(stock_financial_utils PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(won_rules PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(positional_score PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(stock_reader PRIVATE -Wall -Wextra -Wpedantic)
     if(TARGET json_reader_tests)
         target_compile_options(json_reader_tests PRIVATE -Wall -Wextra -Wpedantic)
@@ -77,10 +103,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(TARGET won_rules_tests)
         target_compile_options(won_rules_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    if(TARGET positional_score_tests)
+        target_compile_options(positional_score_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 elseif(MSVC)
     target_compile_options(stock_json_reader PRIVATE /W4)
     target_compile_options(stock_financial_utils PRIVATE /W4)
     target_compile_options(won_rules PRIVATE /W4)
+    target_compile_options(positional_score PRIVATE /W4)
     target_compile_options(stock_reader PRIVATE /W4)
     if(TARGET json_reader_tests)
         target_compile_options(json_reader_tests PRIVATE /W4)
@@ -90,5 +120,8 @@ elseif(MSVC)
     endif()
     if(TARGET won_rules_tests)
         target_compile_options(won_rules_tests PRIVATE /W4)
+    endif()
+    if(TARGET positional_score_tests)
+        target_compile_options(positional_score_tests PRIVATE /W4)
     endif()
 endif()
